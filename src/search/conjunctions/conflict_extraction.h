@@ -33,10 +33,12 @@ private:
 	const int max_conflicts;
 	const int parallel_conflict_priority;
 	const bool optimize_priority;
+	const bool only_immediate_conflicts;
 
 	enum class ScoringMethod {
 		RANDOM,                     // can be set at the end
 		PRIORITY,                   // must be set when the conflict is added, but requires special handling (requires extra pass if not ordered first)
+		RP_DISTANCE,                // must be set when the conflict is added
 		SMALLEST_SIZE,              // can be set at the end
 		BIGGEST_SIZE,               // can be set at the end
 		MIN_DELETER_ALTERNATIVES_ABSOLUTE, // must be set when the conflict is added
@@ -51,7 +53,7 @@ private:
 		UNREACHABILITY,
 		MIN_COST,
 		MAX_COST,
-		MIN_COST_INCREASE,
+		MIN_COST_INCREASE,          // probably the most useless strategy
 		MAX_COST_INCREASE,
 		FEWEST_COUNTERS,            // can be set at the end
 		FEWEST_COUNTERS_ESTIMATE,   // can be set at the end
@@ -77,7 +79,7 @@ private:
 	const std::vector<ScoringMethod> online_scoring;
 	const std::vector<ScoringMethod> annotations_after_priority;
 
-	static auto get_score(const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double;
+	static auto get_score(const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double;
 	static auto get_score(const FactSet &facts, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double;
 	static auto combine_scores(double score1, double score2, ScoringMethod scoring) -> double;
 	static auto compare_scores(double score1, double score2, ScoringMethod scoring) -> bool;
@@ -129,7 +131,7 @@ private:
 		long int total_num_conflicts;
 	} statistics;
 
-	TimedPrinter statistics_printer;
+	std::unique_ptr<TimedPrinter> statistics_printer;
 
 	void print_statistics();
 
@@ -171,8 +173,8 @@ private:
 		static void apply_tie_breaking(ConflictIterator conflicts_begin, ConflictIterator conflicts_end, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, ScoringIndex current_annotation_index, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics);
 
 		// conflict generation
-		static void add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring);
-		static auto generate_candidate_conjunctions_from_rp(const AbstractTask &task, const BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority) -> std::vector<ConflictSet>;
+		static void add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring);
+		static auto generate_candidate_conjunctions_from_rp(const AbstractTask &task, const BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority, bool only_immediate_conflicts) -> std::vector<ConflictSet>;
 		static auto generate_candidate_conjunctions_from_bsg(const AbstractTask &task, BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority) -> std::vector<ConflictSet>;
 		static void find_zero_priority_sequential_conflicts(const AbstractTask &task, BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictSet &conflicts, const std::vector<ScoringMethod> &online_scoring);
 		static void find_sequential_conflicts(const AbstractTask &task, BestSupporterGraph &bsg, const BSGNode &bsg_node, const std::unordered_map<Conjunction *, std::pair<const BSGNode *, int>> &preconditions, const std::vector<const Conjunction *> &goal_path, std::vector<ConflictSet> &conflicts, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring);

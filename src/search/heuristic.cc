@@ -131,6 +131,12 @@ string Heuristic::get_description() const {
     return description;
 }
 
+void Heuristic::clear_preferred() {
+	for (const GlobalOperator *preferred_operator : preferred_operators)
+		preferred_operator->unmark();
+	preferred_operators.clear();
+}
+
 
 static PluginTypePlugin<Heuristic> _type_plugin(
     "Heuristic",

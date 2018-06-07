@@ -20,11 +20,11 @@ OnlineLearningSearchEngine::OnlineLearningSearchEngine(const options::Options &o
 	learning_timer.reset();
 }
 
-auto OnlineLearningSearchEngine::generate_conjunctions(ConjunctionsHeuristic &heuristic, ConjunctionGenerationStrategy::Event event, EvaluationContext &eval_context) -> ConjunctionGenerationStrategy::Result {
+auto OnlineLearningSearchEngine::generate_conjunctions(ConjunctionsHeuristic &heuristic, ConjunctionGenerationStrategy::Event event, EvaluationContext &eval_context, bool check_solved, int bound) -> ConjunctionGenerationStrategy::Result {
 	auto begin = learning_timer();
 	learning_timer.resume();
-	auto result = conjunctions_strategy->modify_conjunctions(heuristic, event, state_registry.get_task(), eval_context);
-	if (result == ConjunctionGenerationStrategy::Result::SOLVED) {
+	auto result = conjunctions_strategy->modify_conjunctions(heuristic, event, state_registry.get_task(), eval_context, &state_registry);
+	if (check_solved && result == ConjunctionGenerationStrategy::Result::SOLVED && (bound == -1 || heuristic.get_last_bsg().get_real_cost() <= bound)) {
 		std::cout << "Solution found!" << std::endl;
 		set_solution(heuristic.get_last_relaxed_plan(), eval_context.get_state());
 	}
@@ -34,11 +34,23 @@ auto OnlineLearningSearchEngine::generate_conjunctions(ConjunctionsHeuristic &he
 }
 
 void OnlineLearningSearchEngine::set_solution(const Plan &partial_plan, const GlobalState &state) {
-	auto solution = Plan();
-	assert(!search_space.get_node(state).is_new());
-	search_space.trace_path(state, solution);
-	solution.insert(std::end(solution), std::begin(partial_plan), std::end(partial_plan));
-	set_plan(solution);
+#ifndef NDEBUG
+	auto current_state = state;
+	for (auto *op : partial_plan) {
+		assert(op->is_applicable(current_state));
+		current_state = state_registry.get_successor_state(current_state, *op);
+	}
+	assert(test_goal(current_state));
+#endif
+	if (state.get_id() == state_registry.get_initial_state().get_id()) {
+		set_plan(partial_plan);
+	} else {
+		assert(!search_space.get_node(state).is_new());
+		auto solution = Plan();
+		search_space.trace_path(state, solution);
+		solution.insert(std::end(solution), std::begin(partial_plan), std::end(partial_plan));
+		set_plan(solution);
+	}
 }
 
 void OnlineLearningSearchEngine::add_options_to_parser(options::OptionParser &parser) {

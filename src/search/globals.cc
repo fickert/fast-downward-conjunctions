@@ -6,8 +6,7 @@
 #include "global_state.h"
 #include "heuristic.h"
 #include "int_packer.h"
-#include "successor_generator.h"
-
+#include "task_utils/successor_generator.h"
 #include "tasks/root_task.h"
 
 #include "utils/logging.h"
@@ -254,14 +253,15 @@ void read_everything(istream &in) {
     read_operators(in);
     read_axioms(in);
 
+    // Ignore everything else
     // Ignore successor generator from preprocessor output.
-    check_magic(in, "begin_SG");
-    string dummy_string = "";
-    while (dummy_string != "end_SG") {
-        getline(in, dummy_string);
-    }
-
-    check_magic(in, "begin_DTG"); // ignore everything from here
+    // check_magic(in, "begin_SG");
+    // string dummy_string = "";
+    // while (dummy_string != "end_SG") {
+    //     getline(in, dummy_string);
+    // }
+	// 
+    // check_magic(in, "begin_DTG"); // ignore everything from here
 
     cout << "done reading input! [t=" << utils::g_timer << "]" << endl;
 
@@ -282,7 +282,8 @@ void read_everything(istream &in) {
          << endl;
 
     cout << "Building successor generator..." << flush;
-    g_successor_generator = new SuccessorGenerator(g_root_task());
+	TaskProxy task_proxy(*g_root_task());
+    g_successor_generator = new successor_generator::SuccessorGenerator(task_proxy);
     cout << "done! [t=" << utils::g_timer << "]" << endl;
 
     cout << "done initalizing global data [t=" << utils::g_timer << "]" << endl;
@@ -395,7 +396,7 @@ vector<pair<int, int>> g_goal;
 vector<GlobalOperator> g_operators;
 vector<GlobalOperator> g_axioms;
 AxiomEvaluator *g_axiom_evaluator;
-SuccessorGenerator *g_successor_generator;
+successor_generator::SuccessorGenerator *g_successor_generator;
 
 string g_plan_filename = "sas_plan";
 int g_num_previously_generated_plans = 0;

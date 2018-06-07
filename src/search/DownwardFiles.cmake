@@ -40,7 +40,6 @@ set(CORE_SOURCES
         segmented_vector.cc
         state_id.cc
         state_registry.cc
-        successor_generator.cc
         task_proxy.cc
         task_tools.cc
         variable_order_finder.cc
@@ -54,6 +53,10 @@ set(CORE_SOURCES
         open_lists/standard_scalar_open_list.cc
         open_lists/tiebreaking_open_list.cc
         open_lists/type_based_open_list.cc
+
+        task_utils/successor_generator.cc
+        task_utils/successor_generator_factory.cc
+        task_utils/successor_generator_internals.cc
 )
 
 fast_downward_add_headers_to_sources_list(CORE_SOURCES)
@@ -524,12 +527,13 @@ fast_downward_plugin(
         conjunctions/conjunctions.h
         conjunctions/conjunctions_heuristic.cc
         conjunctions/generation_strategy.cc
+        conjunctions/novelty_heuristic.cc
+        conjunctions/novelty_linker.cc
         conjunctions/utils.h
         conjunctions/search_engines/enforced_hill_climbing_search.cc
-        conjunctions/search_engines/lazy_search_min_set.cc
-        conjunctions/search_engines/lazy_search_min_set_continue.cc
-        conjunctions/search_engines/lazy_search_min_set_restart.cc
-        conjunctions/search_engines/lazy_search_simple.cc
+        conjunctions/search_engines/enforced_hill_climbing_novelty_search.cc
+        conjunctions/search_engines/ipc18_iterated_search.cc
+        conjunctions/search_engines/lazy_search.cc
         conjunctions/search_engines/online_learning_search_engine.cc
     DEPENDS BOOST
 )

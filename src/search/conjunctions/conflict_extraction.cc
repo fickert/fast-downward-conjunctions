@@ -23,6 +23,8 @@ auto operator<<(std::ostream &out, const ConflictExtraction::ScoringMethod scori
 		return out << "RANDOM";
 	case ConflictExtraction::ScoringMethod::PRIORITY:
 		return out << "PRIORITY";
+	case ConflictExtraction::ScoringMethod::RP_DISTANCE:
+		return out << "RP_DISTANCE";
 	case ConflictExtraction::ScoringMethod::SMALLEST_SIZE:
 		return out << "SMALLEST_SIZE";
 	case ConflictExtraction::ScoringMethod::BIGGEST_SIZE:
@@ -99,9 +101,12 @@ ConflictExtraction::ConflictExtraction(const options::Options &opts) :
 	max_conflicts(opts.get<int>("max_conflicts")),
 	parallel_conflict_priority(opts.get<int>("parallel_conflict_priority")),
 	optimize_priority(opts.get<bool>("optimize_priority")),
+	only_immediate_conflicts(opts.get<bool>("only_immediate_conflicts")),
 	scoring(opts.get_enum_list<ScoringMethod>("conflict_order")),
 	online_scoring(get_online_scoring(scoring, false)),
-	annotations_after_priority(get_online_scoring(scoring, !scoring.empty() && scoring.front() != ScoringMethod::PRIORITY)) {
+	annotations_after_priority(get_online_scoring(scoring, !scoring.empty() && scoring.front() != ScoringMethod::PRIORITY)),
+	statistics(),
+	statistics_printer(opts.get<int>("statistics_interval") != -1 ? std::make_unique<TimedPrinter>(opts.get<int>("statistics_interval")) : nullptr) {
 	auto random_pos = std::find(std::begin(scoring), std::end(scoring), ScoringMethod::RANDOM);
 	if (random_pos != std::end(scoring) && random_pos != std::end(scoring) - 1)
 		std::cout << "WARNING: any tie breakers after RANDOM will be ignored." << std::endl;
@@ -126,7 +131,7 @@ auto ConflictExtraction::generate_candidate_conjunctions(const AbstractTask &tas
 	return generate_conflicts<std::pair<FactSet, std::vector<double>>>(task, bsg, heuristic, count);
 }
 
-auto ConflictExtraction::get_score(const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double {
+auto ConflictExtraction::get_score(const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double {
 	auto compute_deleter_alternatives_absolute = [&deleter]() {
 		assert(!deleter.supported_conjunctions.empty());
 		return std::count_if(std::begin(deleter.supported_conjunctions), std::end(deleter.supported_conjunctions), [](const auto c) { return c->supporters.size() > 1; });
@@ -142,6 +147,8 @@ auto ConflictExtraction::get_score(const Conjunction &c1, const Conjunction &c2,
 	};
 
 	switch (scoring) {
+	case ScoringMethod::RP_DISTANCE:
+		return rp_distance;
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE:
 	case ScoringMethod::MAX_DELETER_ALTERNATIVES_ABSOLUTE:
 		return compute_deleter_alternatives_absolute();
@@ -215,6 +222,7 @@ auto ConflictExtraction::compare_scores(double score1, double score2, ScoringMet
 		std::cerr << "Comparison undefined for scoring method: " << static_cast<int>(scoring) << std::endl;
 		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
 	case ScoringMethod::PRIORITY:
+	case ScoringMethod::RP_DISTANCE:
 	case ScoringMethod::SMALLEST_SIZE:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE_STRICT:
@@ -285,6 +293,7 @@ auto ConflictExtraction::combine_scores(double score1, double score2, ScoringMet
 		assert(score1 == score2);
 		return score1;
 	case ScoringMethod::PRIORITY:
+	case ScoringMethod::RP_DISTANCE:
 	case ScoringMethod::COMBINED_OLDEST:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE_STRICT:
@@ -329,6 +338,7 @@ auto ConflictExtraction::is_online_scoring_method(ScoringMethod scoring) -> bool
 	case ScoringMethod::LAST:
 		return false;
 	case ScoringMethod::PRIORITY:
+	case ScoringMethod::RP_DISTANCE:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE:
 	case ScoringMethod::MAX_DELETER_ALTERNATIVES_ABSOLUTE:
 	case ScoringMethod::MIN_DELETER_ALTERNATIVES_ABSOLUTE_STRICT:
@@ -360,7 +370,7 @@ auto ConflictExtraction::generate_conflicts(const AbstractTask &task, BestSuppor
 		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_bsg(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority), scoring, annotations_after_priority, heuristic, count, statistics);
 		break;
 	case ConjunctionGenerationAlgorithm::RP:
-		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_rp(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority), scoring, annotations_after_priority, heuristic, count, statistics);
+		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_rp(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority, only_immediate_conflicts), scoring, annotations_after_priority, heuristic, count, statistics);
 		break;
 	default:
 		std::cerr << "Unknown conflict extraction algorithm." << std::endl;
@@ -505,14 +515,18 @@ void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector
 
 template<>
 void ConflictExtraction::ConflictExtractionHelper<FactSet>::append_conflicts(std::vector<FactSet> &converted, ConflictSet &&conflicts) {
+	auto size = converted.size();
 	for (auto &&conflict : conflicts)
-		converted.emplace_back(std::move(conflict));
+		if (std::find(std::begin(converted), std::begin(converted) + size, conflict) == std::begin(converted) + size)
+			converted.emplace_back(std::move(conflict));
 }
 
 template<typename ConflictType>
 void ConflictExtraction::ConflictExtractionHelper<ConflictType>::append_conflicts(std::vector<FactSet> &converted, ConflictSet &&conflicts) {
+	auto size = converted.size();
 	for (auto &&conflict : conflicts)
-		converted.emplace_back(std::move(conflict.first));
+		if (std::find(std::begin(converted), std::begin(converted) + size, conflict.first) == std::begin(converted) + size)
+			converted.emplace_back(std::move(conflict.first));
 }
 
 template<typename ConflictType>
@@ -539,9 +553,12 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 		auto i = 0u;
 		for (; i < conflicts.size() && min_priority_conflicts.size() + conflicts[i].size() <= static_cast<std::size_t>(count); ++i)
 			append_conflicts(min_priority_conflicts, std::move(conflicts[i]));
-		if (i < conflicts.size() && min_priority_conflicts.size() < static_cast<std::size_t>(count)) {
+		for (; i < conflicts.size() && min_priority_conflicts.size() < static_cast<std::size_t>(count); ++i) {
 			auto other_priority_conflicts = apply_tie_breaking(std::move(conflicts[i]), std::begin(scoring) + 1, std::end(scoring), annotations_after_priority, heuristic, count - min_priority_conflicts.size(), statistics);
-			min_priority_conflicts.insert(std::end(min_priority_conflicts), std::make_move_iterator(std::begin(other_priority_conflicts)), std::make_move_iterator(std::end(other_priority_conflicts)));
+			auto size = min_priority_conflicts.size();
+			for (auto &&conflict : other_priority_conflicts)
+				if (std::find(std::begin(min_priority_conflicts), std::begin(min_priority_conflicts) + size, conflict) == std::begin(min_priority_conflicts) + size)
+					min_priority_conflicts.emplace_back(std::move(conflict));
 		}
 		return min_priority_conflicts;
 	}
@@ -620,7 +637,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 	}
 	if (is_online_scoring_method(current_scoring_method)) {
 #ifdef _MSC_VER
-		// for some reason VS2017 complains about unreachable code in these lambdas
+		// not sure whats going on here... for some reason VS2017 complains about unreachable code in these lambdas
 #pragma warning(push)
 #pragma warning(disable: 4702)
 #endif
@@ -698,38 +715,40 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 
 
 template <>
-void ConflictExtraction::ConflictExtractionHelper<FactSet>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &, const FactPair &, const ConjunctionsHeuristic &, const std::vector<ScoringMethod> &) {
+void ConflictExtraction::ConflictExtractionHelper<FactSet>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &, const FactPair &, int, const ConjunctionsHeuristic &, const std::vector<ScoringMethod> &) {
 	conflicts.emplace(get_combined_fact_set(c1.facts, c2.facts));
 }
 
 template <>
-void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, double>>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring) {
+void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, double>>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring) {
 	assert(online_scoring.size() == 1);
 	const auto &scoring = online_scoring.front();
 	auto combined = get_combined_fact_set(c1.facts, c2.facts);
 	auto pos = conflicts.find(combined);
+	auto score = scoring == ScoringMethod::MOST_OCCURENCES ? 1 : ConflictExtraction::get_score(c1, c2, deleter, deleted, rp_distance, heuristic, scoring);
 	if (pos == std::end(conflicts))
-		conflicts.emplace(std::move(combined), scoring == ScoringMethod::MOST_OCCURENCES ? 1 : ConflictExtraction::get_score(c1, c2, deleter, deleted, heuristic, scoring));
-	else if (scoring == ScoringMethod::MOST_OCCURENCES)
-		++pos->second;
+		conflicts.emplace(std::move(combined), score);
+	else
+		pos->second = combine_scores(pos->second, score, scoring);
 }
 
 template <>
-void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector<double>>>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring) {
+void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector<double>>>::add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring) {
 	assert(online_scoring.size() > 1);
 	auto combined = get_combined_fact_set(c1.facts, c2.facts);
 	auto pos = conflicts.find(combined);
+	auto scores = std::vector<double>();
+	scores.reserve(online_scoring.size());
+	std::transform(std::begin(online_scoring), std::end(online_scoring), std::back_inserter(scores), [&](auto scoring) {
+		return scoring == ScoringMethod::MOST_OCCURENCES ? 1 : ConflictExtraction::get_score(c1, c2, deleter, deleted, rp_distance, heuristic, scoring);
+	});
 	if (pos == std::end(conflicts)) {
-		auto scores = std::vector<double>();
-		scores.reserve(online_scoring.size());
-		std::transform(std::begin(online_scoring), std::end(online_scoring), std::back_inserter(scores), [&](auto scoring) {
-			return scoring == ScoringMethod::MOST_OCCURENCES ? 1 : ConflictExtraction::get_score(c1, c2, deleter, deleted, heuristic, scoring);
-		});
 		conflicts.emplace(std::move(combined), std::move(scores));
 	} else {
-		auto most_occurences_pos = std::find(std::begin(online_scoring), std::end(online_scoring), ScoringMethod::MOST_OCCURENCES);
-		if (most_occurences_pos != std::end(online_scoring))
-			++*(std::begin(pos->second) + std::distance(std::begin(online_scoring), most_occurences_pos));
+		assert(pos->second.size() == scores.size());
+		assert(pos->second.size() == online_scoring.size());
+		for (auto i = static_cast<std::size_t>(0); i < scores.size(); ++i)
+			pos->second[i] = combine_scores(scores[i], pos->second[i], online_scoring[i]);
 	}
 }
 
@@ -790,7 +809,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_zero_prior
 					return action_representative_edeletes_fact(task, predecessor, f);
 				});
 				if (first_deleted != std::end(precondition_conjunction2->facts))
-					add_combined_conflict(conflicts, *precondition_conjunction1, *precondition_conjunction2, predecessor, *first_deleted, heuristic, online_scoring);
+					add_combined_conflict(conflicts, *precondition_conjunction1, *precondition_conjunction2, predecessor, *first_deleted, 1, heuristic, online_scoring);
 			}
 		}
 	}
@@ -811,7 +830,8 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_sequential
 			// add the pair {p, q_n} as conflict where p is the deleted fact and q is the last label on the path from the deleter to the failed action
 			assert(std::find(std::begin(precondition.second.first->precondition_conjunctions), std::end(precondition.second.first->precondition_conjunctions), goal_path[conflict_distance - 1])
 				!= std::end(precondition.second.first->precondition_conjunctions) && "must be an incident edge to the failed action");
-			add_combined_conflict(conflicts[conflict_distance - 1], *goal_path[conflict_distance - 1], *precondition.first, bsg_node, *first_deleted, heuristic, online_scoring);
+			assert(std::find(std::begin(online_scoring), std::end(online_scoring), ScoringMethod::RP_DISTANCE) == std::end(online_scoring) && "rp distance is currently not supported for bsg conflict extraction");
+			add_combined_conflict(conflicts[conflict_distance - 1], *goal_path[conflict_distance - 1], *precondition.first, bsg_node, *first_deleted, std::numeric_limits<int>::max(), heuristic, online_scoring);
 		}
 	}
 
@@ -876,9 +896,11 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_parallel_c
 				auto corresponding_deleted_fact = predecessor2.branch_deleted_facts.find(precondition_fact.first);
 
 				// deletes some precondition and failed node and deleter are distinct
-				if (corresponding_deleted_fact != std::end(predecessor2.branch_deleted_facts) && precondition_fact.second != corresponding_deleted_fact->second)
+				if (corresponding_deleted_fact != std::end(predecessor2.branch_deleted_facts) && precondition_fact.second != corresponding_deleted_fact->second) {
 					// add {p_n, q_m} as conflict. note that we could also add other {p_i, q_j}, but just one is fine too
-					add_combined_conflict(conflicts, *precondition_conjunction1, *precondition_conjunction2, *corresponding_deleted_fact->second, precondition_fact.first, heuristic, online_scoring);
+					assert(std::find(std::begin(online_scoring), std::end(online_scoring), ScoringMethod::RP_DISTANCE) == std::end(online_scoring) && "rp distance is currently not supported for bsg conflict extraction");
+					add_combined_conflict(conflicts, *precondition_conjunction1, *precondition_conjunction2, *corresponding_deleted_fact->second, precondition_fact.first, std::numeric_limits<int>::max(), heuristic, online_scoring);
+				}
 			}
 		}
 	}
@@ -918,7 +940,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_parallel_c
 
 
 template<typename ConflictType>
-auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candidate_conjunctions_from_rp(const AbstractTask &task, const BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority) -> std::vector<ConflictSet> {
+auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candidate_conjunctions_from_rp(const AbstractTask &task, const BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority, bool only_immediate_conflicts) -> std::vector<ConflictSet> {
 	using BSGIndex = typename decltype(bsg.nodes)::size_type;
 	auto preconditions = std::unordered_map<Conjunction *, BSGIndex>();
 
@@ -970,7 +992,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 			path[i] = std::get<1>(shortest_paths[to][from]);
 			to = std::get<0>(shortest_paths[to][from]);
 		}
-		assert(to == from);
+		assert(static_cast<int>(to) == static_cast<int>(from));
 		return path;
 	};
 
@@ -987,7 +1009,8 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 	conflicts.resize(std::max<typename decltype(conflicts)::size_type>(bsg.nodes.size(), parallel_conflict_priority + 1));
 
 	if (prefer_lower_priority) {
-		for (const auto &bsg_node : bsg.nodes) {
+		for (auto i = static_cast<BSGIndex>(0); i < bsg.nodes.size() && num_conflicts < max_conflicts; ++i) {
+			const auto &bsg_node = bsg[i];
 			const auto &precondition_conjunctions = heuristic.cross_context ?
 				bsg_node.precondition_conjunctions :
 				get_non_dominated_conjunctions(bsg_node.precondition_facts, heuristic.conjunctions_containing_fact);
@@ -1000,12 +1023,19 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 					// the two conjunctions must be distinct
 					if (precondition_conjunction1 == precondition_conjunction2)
 						continue;
+					// guarantee that the conflict occurs in the ordered relaxed plan
+					if (precondition_conjunction1->supporter_pos - i != 1)
+						continue;
 					const auto &predecessor = bsg[precondition_conjunction1->supporter_pos];
 					auto first_deleted = std::find_if(std::begin(precondition_conjunction2->facts), std::end(precondition_conjunction2->facts), [&task, &predecessor](const auto &f) {
 						return action_representative_edeletes_fact(task, predecessor, f);
 					});
-					if (first_deleted != std::end(precondition_conjunction2->facts))
-						add_combined_conflict(conflicts.front(), *precondition_conjunction1, *precondition_conjunction2, predecessor, *first_deleted, heuristic, online_scoring);
+					assert(ancestors[i][precondition_conjunction1->supporter_pos]);
+					assert(construct_path(precondition_conjunction1->supporter_pos, i).size() == 1);
+					if (first_deleted != std::end(precondition_conjunction2->facts)) {
+						add_combined_conflict(conflicts.front(), *precondition_conjunction1, *precondition_conjunction2, predecessor, *first_deleted, 1, heuristic, online_scoring);
+						++num_conflicts;
+					}
 				}
 			}
 		}
@@ -1014,6 +1044,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 	if (!prefer_lower_priority || num_conflicts < count) {
 		// NOTE: this stuff should be reasonably fast, only the common descendant could be found quicker with a more complex algorithm
 		for (auto i = static_cast<BSGIndex>(0); i < bsg.nodes.size() && num_conflicts < max_conflicts; ++i) {
+			auto min_priority = std::numeric_limits<int>::max();
 			for (const auto &precondition : preconditions) {
 				auto first_deleted = std::find_if(std::begin(precondition.first->facts), std::end(precondition.first->facts), [&task, &bsg, i](const auto &f) {
 					return action_representative_edeletes_fact(task, bsg.nodes[i], f);
@@ -1021,29 +1052,53 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 				if (first_deleted != std::end(precondition.first->facts)) {
 					const auto deleter = i;
 					const auto failed = precondition.second;
+					assert(deleter > failed);
 					if (ancestors[failed][deleter]) {
 						// sequential conflict
+						const auto priority = std::get<2>(shortest_paths[failed][deleter]) - 1;
+						if (prefer_lower_priority) {
+							if (min_priority != std::numeric_limits<int>::max() && priority > min_priority && static_cast<int>(conflicts[min_priority].size()) >= count)
+								continue;
+							min_priority = std::min(min_priority, priority);
+						}
 						const auto path = construct_path(deleter, failed);
 						assert(!path.empty());
-
+						assert(static_cast<int>(path.size()) - 1 == priority);
 						// add the pair {p, q_n} as conflict where p is the deleted fact and q is the last label on the path from the deleter to the failed action
-						add_combined_conflict(conflicts[path.size() - 1], *path.back(), *precondition.first, bsg.nodes[deleter], *first_deleted, heuristic, online_scoring);
-					}
-					else {
+						add_combined_conflict(conflicts[priority], *path.back(), *precondition.first, bsg.nodes[deleter], *first_deleted, deleter - failed, heuristic, online_scoring);
+					} else {
 						// parallel conflict
+						if (prefer_lower_priority) {
+							if (min_priority != std::numeric_limits<int>::max() && parallel_conflict_priority > min_priority && static_cast<int>(conflicts[min_priority].size()) >= count)
+								continue;
+							min_priority = std::min(min_priority, parallel_conflict_priority);
+						}
 						const auto common_descendant = find_common_descendant(deleter, failed);
 						const auto deleter_path = construct_path(deleter, common_descendant);
 						const auto failed_path = construct_path(failed, common_descendant);
 						assert(!deleter_path.empty());
 						assert(!failed_path.empty());
-						add_combined_conflict(conflicts[parallel_conflict_priority], *deleter_path.back(), *failed_path.back(), bsg.nodes[deleter], *first_deleted, heuristic, online_scoring);
+						add_combined_conflict(conflicts[parallel_conflict_priority], *deleter_path.back(), *failed_path.back(), bsg.nodes[deleter], *first_deleted, deleter - failed, heuristic, online_scoring);
 					}
 					++num_conflicts;
 				}
 			}
+			// remove open preconditions that are achieved by this action
 			for (auto conjunction : bsg[i].supported_conjunctions)
 				preconditions.erase(conjunction);
 
+			// remove open preconditions that are mutex with the effects of this action
+			if (only_immediate_conflicts) {
+				for (auto it = std::begin(preconditions); it != std::end(preconditions); ) {
+					if (action_representative_edeletes_conjunction(task, bsg[i], it->first)) {
+						it = preconditions.erase(it);
+					} else {
+						++it;
+					}
+				}
+			}
+
+			// add this action's preconditions
 			for (auto precondition : bsg[i].precondition_conjunctions)
 				preconditions[precondition] = i;
 		}
@@ -1058,12 +1113,14 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 
 
 void ConflictExtraction::print_statistics() {
-	auto ss = std::stringstream();
-	ss << "Average conflict tie break size: " << statistics.get_avg_tie_break_size() << std::endl;
-	ss << "Maximum conflict tie break size: " << statistics.max_tie_break_size << std::endl;
-	ss << "Average number of conflicts: " << statistics.get_avg_num_conflicts() << std::endl;
-	ss << "Maximum number of conflicts: " << statistics.max_num_conflicts << std::endl;
-	statistics_printer.print(ss.str());
+	if (statistics_printer) {
+		auto ss = std::stringstream();
+		ss << "Average conflict tie break size: " << statistics.get_avg_tie_break_size() << std::endl;
+		ss << "Maximum conflict tie break size: " << statistics.max_tie_break_size << std::endl;
+		ss << "Average number of conflicts: " << statistics.get_avg_num_conflicts() << std::endl;
+		ss << "Maximum number of conflicts: " << statistics.max_num_conflicts << std::endl;
+		statistics_printer->print(ss.str());
+	}
 }
 
 
@@ -1075,8 +1132,9 @@ static auto _parse(options::OptionParser &parser) -> std::shared_ptr<ConflictExt
 		 "Extract conflicts occuring in the sequentialized relaxed plan from the best supporter graph."});
 	parser.add_option<int>("max_conflicts", "Maximum number of conflicts per call.", std::to_string(std::numeric_limits<int>::max()));
 	parser.add_option<int>("parallel_conflict_priority", "Parallel conflict priority", "1");
-	parser.add_option<bool>("optimize_priority", "Optimize for priority as the first tie breaker.", "true");
-	auto conflict_order_choices = std::vector<std::string>{"RANDOM", "PRIORITY", "SMALLEST_SIZE", "BIGGEST_SIZE",
+	parser.add_option<bool>("optimize_priority", "Greedily optimize for priority as the first tie breaker (may exclude some conflicts).", "true");
+	parser.add_option<bool>("only_immediate_conflicts", "Ignore conflicts that have other conflicts between the deleter and failed action.", "true");
+	auto conflict_order_choices = std::vector<std::string>{"RANDOM", "PRIORITY", "RP_DISTANCE", "SMALLEST_SIZE", "BIGGEST_SIZE",
 		"MIN_DELETER_ALTERNATIVES_ABSOLUTE", "MAX_DELETER_ALTERNATIVES_ABSOLUTE",
 		"MIN_DELETER_ALTERNATIVES_ABSOLUTE_STRICT", "MAX_DELETER_ALTERNATIVES_ABSOLUTE_STRICT",
 		"MIN_DELETER_ALTERNATIVES_RELATIVE", "MAX_DELETER_ALTERNATIVES_RELATIVE",
@@ -1088,6 +1146,7 @@ static auto _parse(options::OptionParser &parser) -> std::shared_ptr<ConflictExt
 	parser.add_enum_list_option("conflict_order", conflict_order_choices,
 		"Conflict ordering. The final tie breaker is implicitly arbitrary. The list can also be empty, in which case simply the first conflict is chosen.",
 		"[PRIORITY, FEWEST_COUNTERS]");
+	parser.add_option<int>("statistics_interval", "print statistics every X seconds", "-1");
 	if (parser.help_mode() || parser.dry_run())
 		return nullptr;
 	return std::make_shared<ConflictExtraction>(parser.parse());

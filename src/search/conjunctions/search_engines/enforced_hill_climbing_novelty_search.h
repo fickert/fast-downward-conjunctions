@@ -1,5 +1,5 @@
-#ifndef CONJUNCTIONS_ENFORCED_HILL_CLIMBING_SEARCH_H
-#define CONJUNCTIONS_ENFORCED_HILL_CLIMBING_SEARCH_H
+#ifndef CONJUNCTIONS_ENFORCED_HILL_CLIMBING_NOVELTY_SEARCH_H
+#define CONJUNCTIONS_ENFORCED_HILL_CLIMBING_NOVELTY_SEARCH_H
 
 #include "online_learning_search_engine.h"
 
@@ -19,16 +19,20 @@
 #pragma warning(default: 4800 4512 4706 4100 4127 4702 4239 4996 4456 4458 4505)
 #endif
 
+namespace novelty {
+class NoveltyHeuristic;
+}
+
 namespace options {
 class Options;
 }
 
 namespace conjunctions {
 // Enforced hill-climbing with deferred evaluation and online learning of explicit conjunctions in local minima.
-class EnforcedHillClimbingSearch : public OnlineLearningSearchEngine {
+class EnforcedHillClimbingNoveltySearch : public OnlineLearningSearchEngine {
 public:
-	explicit EnforcedHillClimbingSearch(const options::Options &opts);
-	~EnforcedHillClimbingSearch() override;
+	explicit EnforcedHillClimbingNoveltySearch(const options::Options &opts);
+	~EnforcedHillClimbingNoveltySearch() override;
 
 	void print_statistics() const override;
 
@@ -50,6 +54,7 @@ private:
 	std::unique_ptr<EdgeOpenList> open_list;
 
 	ConjunctionsHeuristic *heuristic;
+	novelty::NoveltyHeuristic *novelty_heuristic;
 	std::vector<Heuristic *> preferred_operator_heuristics;
 	std::set<Heuristic *> heuristics;
 	bool use_preferred;
@@ -74,7 +79,11 @@ private:
 			num_saved_evaluations(0),
 			num_search_space_exhaustion(0),
 			num_dead_ends(0),
-			total_dead_end_backjump_length(0) {}
+			total_dead_end_backjump_length(0),
+			novelty_timer() {
+			novelty_timer.stop();
+			novelty_timer.reset();
+		}
 
 		int num_ehc_phases;
 		int num_dead_ends_during_learning;
@@ -85,6 +94,7 @@ private:
 		int num_search_space_exhaustion;
 		int num_dead_ends;
 		int total_dead_end_backjump_length;
+		utils::Timer novelty_timer;
 
 		auto get_avg_expansions_per_ehc_phase(int num_total_expansions) const -> double {
 			return num_ehc_phases != 0 ? num_total_expansions / static_cast<double>(num_ehc_phases) : 0.;
@@ -124,7 +134,7 @@ private:
 	int bfs_lowest_h_value;
 	bool solved;
 
-	bool k_cutoff;
+	bool bfs_cutoff;
 
 	// settings
 	const bool no_learning;

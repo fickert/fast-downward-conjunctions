@@ -26,7 +26,8 @@ SearchEngine::SearchEngine(const Options &opts)
       search_space(state_registry,
                    static_cast<OperatorCost>(opts.get_enum("cost_type"))),
       cost_type(static_cast<OperatorCost>(opts.get_enum("cost_type"))),
-      max_time(opts.get<double>("max_time")) {
+      max_time(opts.get<double>("max_time")),
+      timer(nullptr) {
     if (opts.get<int>("bound") < 0) {
         cerr << "error: negative cost bound " << opts.get<int>("bound") << endl;
         utils::exit_with(ExitCode::INPUT_ERROR);
@@ -55,25 +56,37 @@ const SearchEngine::Plan &SearchEngine::get_plan() const {
     return plan;
 }
 
+auto SearchEngine::is_time_expired() const -> bool {
+	assert(timer);
+	return timer->is_expired();
+}
+
 void SearchEngine::set_plan(const Plan &p) {
     solution_found = true;
     plan = p;
 }
 
+void SearchEngine::clear_solved() {
+	status = IN_PROGRESS;
+	solution_found = false;
+	plan.clear();
+}
+
 void SearchEngine::search() {
     initialize();
-    utils::CountdownTimer timer(max_time);
+    timer = std::make_unique<utils::CountdownTimer>(max_time);
     while (status == IN_PROGRESS) {
         status = step();
-        if (timer.is_expired()) {
+        if (timer->is_expired()) {
             cout << "Time limit reached. Abort search." << endl;
             status = TIMEOUT;
             break;
         }
     }
     // TODO: Revise when and which search times are logged.
-    cout << "Actual search time: " << timer
+    cout << "Actual search time: " << *timer
          << " [t=" << utils::g_timer << "]" << endl;
+    timer.reset(nullptr);
 }
 
 bool SearchEngine::check_goal_and_set_plan(const GlobalState &state) {

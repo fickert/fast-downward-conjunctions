@@ -17,6 +17,10 @@ class OptionParser;
 class Options;
 }
 
+namespace utils {
+class CountdownTimer;
+}
+
 enum SearchStatus {IN_PROGRESS, TIMEOUT, FAILED, SOLVED};
 
 class SearchEngine {
@@ -34,11 +38,15 @@ protected:
     int bound;
     OperatorCost cost_type;
     double max_time;
+    std::unique_ptr<utils::CountdownTimer> timer;
+
+    auto is_time_expired() const -> bool;
 
     virtual void initialize() {}
     virtual SearchStatus step() = 0;
 
     void set_plan(const Plan &plan);
+	void clear_solved();
     bool check_goal_and_set_plan(const GlobalState &state);
     int get_adjusted_cost(const GlobalOperator &op) const;
 public:

@@ -4,8 +4,9 @@
 #include "pattern_generator.h"
 #include "types.h"
 
-#include "../successor_generator.h"
 #include "../task_proxy.h"
+
+#include "../task_utils/successor_generator.h"
 
 #include <cstdlib>
 #include <memory>
@@ -73,8 +74,8 @@ class PatternCollectionGeneratorHillclimbing : public PatternCollectionGenerator
       a sample state, thus totalling exactly num_samples of sample states.
     */
     void sample_states(
-        TaskProxy task_proxy,
-        const SuccessorGenerator &successor_generator,
+        const TaskProxy &task_proxy,
+        const successor_generator::SuccessorGenerator &successor_generator,
         std::vector<State> &samples,
         double average_operator_cost);
 
@@ -114,7 +115,6 @@ class PatternCollectionGeneratorHillclimbing : public PatternCollectionGenerator
     */
     void hill_climbing(
         TaskProxy task_proxy,
-        const SuccessorGenerator &successor_generator,
         double average_operator_costs,
         PatternCollection &initial_candidate_patterns);
 

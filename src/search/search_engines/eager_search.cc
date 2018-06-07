@@ -8,9 +8,9 @@
 #include "../option_parser.h"
 #include "../plugin.h"
 #include "../pruning_method.h"
-#include "../successor_generator.h"
 
 #include "../open_lists/open_list_factory.h"
+#include "../task_utils/successor_generator.h"
 
 #include <cassert>
 #include <cstdlib>

@@ -6,7 +6,7 @@
 #include "../heuristic.h"
 #include "../option_parser.h"
 #include "../sampling.h"
-#include "../successor_generator.h"
+#include "../task_utils/successor_generator.h"
 #include "../task_tools.h"
 
 #include "../utils/markup.h"
@@ -22,7 +22,7 @@ vector<State> sample_without_dead_end_detection(
     const TaskProxy task_proxy(*task);
     State initial_state = task_proxy.get_initial_state();
     optimizer.optimize_for_state(initial_state);
-    SuccessorGenerator successor_generator(task);
+    successor_generator::SuccessorGenerator successor_generator(task_proxy);
     int init_h = optimizer.get_potential_function()->get_value(initial_state);
     return sample_states_with_random_walks(
         task_proxy, successor_generator, num_samples, init_h,

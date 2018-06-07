@@ -2,10 +2,10 @@
 
 #include "causal_graph.h"
 #include "globals.h"
+#include "utils/rng.h"
 
 #include "../utils/system.h"
 
-#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
@@ -31,7 +31,7 @@ VariableOrderFinder::VariableOrderFinder(const shared_ptr<AbstractTask> task,
 
     if (variable_order_type == CG_GOAL_RANDOM ||
         variable_order_type == RANDOM)
-        random_shuffle(remaining_vars.begin(), remaining_vars.end());
+        g_rng()->shuffle(remaining_vars.begin(), remaining_vars.end());
 
     is_causal_predecessor.resize(var_count, false);
     is_goal_variable.resize(var_count, false);

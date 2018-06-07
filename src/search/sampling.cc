@@ -1,7 +1,8 @@
 #include "sampling.h"
 
 #include "globals.h"
-#include "successor_generator.h"
+#include "global_operator.h"
+#include "task_utils/successor_generator.h"
 #include "task_proxy.h"
 #include "task_tools.h"
 
@@ -13,7 +14,7 @@ using namespace std;
 
 vector<State> sample_states_with_random_walks(
     TaskProxy task_proxy,
-    const SuccessorGenerator &successor_generator,
+    const successor_generator::SuccessorGenerator &successor_generator,
     int num_samples,
     int init_h,
     double average_operator_cost,
@@ -56,7 +57,7 @@ vector<State> sample_states_with_random_walks(
 
         // Sample one state with a random walk of length length.
         State current_state(initial_state);
-        vector<OperatorProxy> applicable_ops;
+        vector<const GlobalOperator *> applicable_ops;
         for (int j = 0; j < length; ++j) {
             applicable_ops.clear();
             successor_generator.generate_applicable_ops(current_state,
@@ -65,7 +66,9 @@ vector<State> sample_states_with_random_walks(
             if (applicable_ops.empty()) {
                 break;
             } else {
-                const OperatorProxy &random_op = *g_rng()->choose(applicable_ops);
+                const GlobalOperator *random_global_op = *g_rng()->choose(applicable_ops);
+                // temporary hack
+                const auto random_op = task_proxy.get_operators()[random_global_op - &*g_operators.begin()];
                 assert(is_applicable(random_op, current_state));
                 current_state = current_state.get_successor(random_op);
                 /* If current state is a dead end, then restart the random walk

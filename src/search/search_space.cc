@@ -168,3 +168,7 @@ void SearchSpace::print_statistics() const {
     cout << "Number of registered states: "
          << state_registry.size() << endl;
 }
+
+void SearchSpace::clear() {
+	search_node_infos.remove_state_registry(&state_registry);
+}

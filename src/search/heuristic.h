@@ -96,6 +96,8 @@ public:
     bool is_h_dirty(GlobalState &state) {
         return heuristic_cache[state].dirty;
     }
+
+	void clear_preferred();
 };
 
 #endif

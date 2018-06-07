@@ -1,14 +1,28 @@
-#include "iterated_search.h"
+#include "ipc18_iterated_search.h"
 
 #include "../option_parser.h"
 #include "../plugin.h"
+
+#include "lazy_search.h"
+#include "../novelty_heuristic.h"
 
 #include <iostream>
 
 using namespace std;
 
-namespace iterated_search {
-IteratedSearch::IteratedSearch(const Options &opts)
+namespace conjunctions {
+
+auto construct_delete_after_phase(const Options &opts) -> std::unordered_map<int, std::vector<Heuristic *>> {
+	auto delete_after_phase = std::unordered_map<int, std::vector<Heuristic *>>();
+	auto delete_phases = opts.get_list<int>("delete_after_phase_phases");
+	auto delete_heuristics = opts.get_list<Heuristic *>("delete_after_phase_heuristics");
+	assert(delete_phases.size() == delete_heuristics.size());
+	for (auto i = 0u; i < delete_phases.size(); ++i)
+		delete_after_phase[delete_phases[i]].push_back(delete_heuristics[i]);
+	return delete_after_phase;
+}
+
+IPC18IteratedSearch::IPC18IteratedSearch(const Options &opts)
     : SearchEngine(opts),
       engine_configs(opts.get_list<ParseTree>("engine_configs")),
       pass_bound(opts.get<bool>("pass_bound")),
@@ -16,12 +30,17 @@ IteratedSearch::IteratedSearch(const Options &opts)
       continue_on_fail(opts.get<bool>("continue_on_fail")),
       continue_on_solve(opts.get<bool>("continue_on_solve")),
       phase(0),
+      current_search(nullptr),
       last_phase_found_solution(false),
-      best_bound(bound),
-      iterated_found_solution(false) {
-}
+      best_bound(bound == std::numeric_limits<int>::max() ? bound : bound + 1),
+      iterated_found_solution(false),
+      decision_point_was_solved(false),
+      decision_point(opts.get<int>("decision_point")),
+      skip_if_solved(opts.get_list<int>("skip_if_solved")),
+      skip_if_failed(opts.get_list<int>("skip_if_failed")),
+      delete_after_phase(construct_delete_after_phase(opts)) {}
 
-SearchEngine *IteratedSearch::get_search_engine(
+SearchEngine *IPC18IteratedSearch::get_search_engine(
     int engine_configs_index) {
     OptionParser parser(engine_configs[engine_configs_index], false);
     SearchEngine *engine = parser.start_parsing<SearchEngine *>();
@@ -33,7 +52,7 @@ SearchEngine *IteratedSearch::get_search_engine(
     return engine;
 }
 
-SearchEngine *IteratedSearch::create_phase(int phase) {
+SearchEngine *IPC18IteratedSearch::create_phase(int phase) {
     int num_phases = engine_configs.size();
     if (phase >= num_phases) {
         /* We've gone through all searches. We continue if
@@ -53,25 +72,24 @@ SearchEngine *IteratedSearch::create_phase(int phase) {
     return get_search_engine(phase);
 }
 
-SearchStatus IteratedSearch::step() {
-    SearchEngine *current_search = create_phase(phase);
+SearchStatus IPC18IteratedSearch::step() {
+	if (!current_search)
+		current_search = create_phase(phase);
     if (!current_search) {
         return found_solution() ? SOLVED : FAILED;
     }
     if (pass_bound) {
-        current_search->set_bound(best_bound);
+        current_search->set_bound(best_bound - 1);
     }
-    ++phase;
-
     current_search->search();
 
-    SearchEngine::Plan found_plan;
-    int plan_cost = 0;
-    last_phase_found_solution = current_search->found_solution();
+	last_phase_found_solution = current_search->found_solution();
     if (last_phase_found_solution) {
         iterated_found_solution = true;
-        found_plan = current_search->get_plan();
-        plan_cost = calculate_plan_cost(found_plan);
+		if (phase == decision_point)
+			decision_point_was_solved = true;
+        const auto &found_plan = current_search->get_plan();
+        const auto plan_cost = calculate_plan_cost(found_plan);
         if (plan_cost < best_bound) {
             save_plan(found_plan, continue_on_solve);
             best_bound = plan_cost;
@@ -88,10 +106,28 @@ SearchStatus IteratedSearch::step() {
     statistics.inc_generated_ops(current_stats.get_generated_ops());
     statistics.inc_reopened(current_stats.get_reopened());
 
+	auto current_lazy_search = dynamic_cast<LazySearch *>(current_search);
+	if (current_lazy_search && current_lazy_search->has_another_phase()) {
+		current_lazy_search->restart_with_next_weight();
+	} else {
+		current_search = nullptr;
+		const auto skip_phase = [this]() {
+			return phase >= decision_point && ((decision_point_was_solved && std::find(std::begin(skip_if_solved), std::end(skip_if_solved), phase) != std::end(skip_if_solved))
+				|| (!decision_point_was_solved && std::find(std::begin(skip_if_failed), std::end(skip_if_failed), phase) != std::end(skip_if_failed)));
+		};
+		do {
+			const auto heuristics_to_be_deleted = delete_after_phase.find(phase);
+			if (heuristics_to_be_deleted != std::end(delete_after_phase))
+				for (auto *heuristic : heuristics_to_be_deleted->second)
+					delete heuristic;
+			++phase;
+		} while (skip_phase());
+	}
+
     return step_return_value();
 }
 
-SearchStatus IteratedSearch::step_return_value() {
+SearchStatus IPC18IteratedSearch::step_return_value() {
     if (iterated_found_solution)
         cout << "Best solution cost so far: " << best_bound << endl;
 
@@ -114,12 +150,12 @@ SearchStatus IteratedSearch::step_return_value() {
     }
 }
 
-void IteratedSearch::print_statistics() const {
+void IPC18IteratedSearch::print_statistics() const {
     cout << "Cumulative statistics:" << endl;
     statistics.print_detailed_statistics();
 }
 
-void IteratedSearch::save_plan_if_necessary() const {
+void IPC18IteratedSearch::save_plan_if_necessary() const {
     // We don't need to save here, as we automatically save after
     // each successful search iteration.
 }
@@ -167,8 +203,18 @@ static SearchEngine *_parse(OptionParser &parser) {
     parser.add_option<bool>("continue_on_solve",
                             "continue search after solution found",
                             "true");
+	parser.add_option<int>("decision_point", "deciding search index for skip if solved/failed options", "0");
+	parser.add_list_option<int>("skip_if_solved", "phases that are going to be skipped if the deciding seach finds a solution", "[]");
+	parser.add_list_option<int>("skip_if_failed", "phases that are going to be skipped if the deciding seach does not find a solution", "[]");
+	parser.add_list_option<Heuristic *>("delete_after_phase_heuristics", "specifies the heuristics to be deleted after certain phases to free up memory", "[]");
+	parser.add_list_option<int>("delete_after_phase_phases", "specifies the phase after which the corresponding heuristics are deleted (must have the same length as delete_after_phase_heuristics)", "[]");
     SearchEngine::add_options_to_parser(parser);
     Options opts = parser.parse();
+
+	if (opts.get_list<Heuristic *>("delete_after_phase_heuristics").size() != opts.get_list<int>("delete_after_phase_phases").size()) {
+		std::cerr << "delete_after_phase_heuristics must have the same length as delete_after_phase_heuristics" << std::endl;
+		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+	}
 
     opts.verify_list_non_empty<ParseTree>("engine_configs");
 
@@ -182,9 +228,9 @@ static SearchEngine *_parse(OptionParser &parser) {
         }
         return nullptr;
     } else {
-        return new IteratedSearch(opts);
+        return new IPC18IteratedSearch(opts);
     }
 }
 
-static Plugin<SearchEngine> _plugin("iterated", _parse);
+static Plugin<SearchEngine> _plugin("ipc18_iterated", _parse);
 }

@@ -15,7 +15,10 @@ class GlobalOperator;
 class GlobalState;
 class IntPacker;
 class StateRegistry;
+
+namespace successor_generator {
 class SuccessorGenerator;
+}
 
 namespace utils {
 struct Log;
@@ -66,7 +69,7 @@ extern std::vector<std::pair<int, int>> g_goal;
 extern std::vector<GlobalOperator> g_operators;
 extern std::vector<GlobalOperator> g_axioms;
 extern AxiomEvaluator *g_axiom_evaluator;
-extern SuccessorGenerator *g_successor_generator;
+extern successor_generator::SuccessorGenerator *g_successor_generator;
 extern std::string g_plan_filename;
 extern int g_num_previously_generated_plans;
 extern bool g_is_part_of_anytime_portfolio;

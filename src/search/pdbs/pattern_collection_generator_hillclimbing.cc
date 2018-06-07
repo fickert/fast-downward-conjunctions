@@ -94,7 +94,7 @@ size_t PatternCollectionGeneratorHillclimbing::generate_pdbs_for_candidates(
 }
 
 void PatternCollectionGeneratorHillclimbing::sample_states(
-    TaskProxy task_proxy, const SuccessorGenerator &successor_generator,
+    const TaskProxy &task_proxy, const successor_generator::SuccessorGenerator &successor_generator,
     vector<State> &samples, double average_operator_cost) {
     int init_h = current_pdbs->get_value(
         task_proxy.get_initial_state());
@@ -213,7 +213,6 @@ bool PatternCollectionGeneratorHillclimbing::is_heuristic_improved(
 
 void PatternCollectionGeneratorHillclimbing::hill_climbing(
     TaskProxy task_proxy,
-    const SuccessorGenerator &successor_generator,
     double average_operator_cost,
     PatternCollection &initial_candidate_patterns) {
     hill_climbing_timer = new utils::CountdownTimer(max_time);
@@ -227,6 +226,7 @@ void PatternCollectionGeneratorHillclimbing::hill_climbing(
     int num_iterations = 0;
     size_t max_pdb_size = 0;
     State initial_state = task_proxy.get_initial_state();
+    successor_generator::SuccessorGenerator successor_generator(task_proxy);
     try {
         while (true) {
             ++num_iterations;
@@ -300,8 +300,6 @@ void PatternCollectionGeneratorHillclimbing::hill_climbing(
 
 PatternCollectionInformation PatternCollectionGeneratorHillclimbing::generate(shared_ptr<AbstractTask> task) {
     TaskProxy task_proxy(*task);
-    SuccessorGenerator successor_generator(task);
-
     utils::Timer timer;
     double average_operator_cost = get_average_operator_cost(task_proxy);
     cout << "Average operator cost: " << average_operator_cost << endl;
@@ -335,7 +333,7 @@ PatternCollectionInformation PatternCollectionGeneratorHillclimbing::generate(sh
                (contains the new_candidates after each call to
                generate_candidate_patterns) */
             hill_climbing(
-                task_proxy, successor_generator, average_operator_cost,
+                task_proxy, average_operator_cost,
                 initial_candidate_patterns);
         cout << "Pattern generation (Haslum et al.) time: " << timer << endl;
     }

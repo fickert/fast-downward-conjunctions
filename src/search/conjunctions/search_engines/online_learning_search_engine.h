@@ -26,7 +26,7 @@ public:
 	static void add_options_to_parser(options::OptionParser &);
 
 protected:
-	auto generate_conjunctions(ConjunctionsHeuristic &heuristic, ConjunctionGenerationStrategy::Event event, EvaluationContext &eval_context) -> ConjunctionGenerationStrategy::Result;
+	auto generate_conjunctions(ConjunctionsHeuristic &heuristic, ConjunctionGenerationStrategy::Event event, EvaluationContext &eval_context, bool check_solved = true, int bound = -1) -> ConjunctionGenerationStrategy::Result;
 	void set_solution(const Plan &partial_plan, const GlobalState &state);
 
 	void start_search_timer() {

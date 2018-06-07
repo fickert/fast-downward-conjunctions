@@ -6,9 +6,9 @@
 #include "../heuristic.h"
 #include "../option_parser.h"
 #include "../plugin.h"
-#include "../successor_generator.h"
 
 #include "../open_lists/open_list_factory.h"
+#include "../task_utils/successor_generator.h"
 
 #include "../utils/rng.h"
 

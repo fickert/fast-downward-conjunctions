@@ -4,11 +4,14 @@
 #pragma once
 
 #include <algorithm>
+#include <numeric>
 #include <unordered_map>
 #include <boost/range/adaptor/reversed.hpp>
+#include <utility>
 
 #include "../abstract_task.h"
 #include "../task_proxy.h"
+#include "../global_operator.h"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -19,23 +22,25 @@ namespace conjunctions {
 
 using FactSet = std::vector<FactPair>;
 
+using cost_t = long long int;
+
 struct Conjunction;
 struct BSGNode;
 
 struct Action {
-	Action(int id, const OperatorProxy &op, const FactSet &pre, const FactSet &eff, int cost) :
+	Action(int id, const OperatorProxy &op, FactSet pre, FactSet eff, int cost) :
 		id(id),
 		op(new OperatorProxy(op)),
-		pre(pre),
-		eff(eff),
+		pre(std::move(pre)),
+		eff(std::move(eff)),
 		cost(cost) {}
 
 	// constructor for end action only
-	Action(const FactSet &pre, const FactSet &eff) :
+	Action(FactSet pre, FactSet eff) :
 		id(-1),
 		op(nullptr),
-		pre(pre),
-		eff(eff),
+		pre(std::move(pre)),
+		eff(std::move(eff)),
 		cost(0) {}
 
 	const int id;
@@ -48,14 +53,14 @@ struct Action {
 };
 
 inline auto operator<<(std::ostream &out, const Action &action) -> std::ostream & {
-	return out << "Action(" << action.id << ")";
+	out << "Action(" << action.id << ")";
+	if (action.op)
+		out << "  [ " << action.op->get_name() << "]";
+	return out;
 }
 
 struct CounterGroup {
-	CounterGroup(const FactSet &regression) :
-		group(), regression(regression), regression_conjunctions(), value(-1), cost(0) {}
-
-	CounterGroup(FactSet &&regression) :
+	CounterGroup(FactSet regression) :
 		group(), regression(std::move(regression)), regression_conjunctions(), value(-1), cost(0) {}
 
 	std::vector<std::pair<const Action *, Conjunction *>> group;
@@ -68,7 +73,7 @@ struct CounterGroup {
 	// counts the number of unsatisfied regression conjunctions
 	int value;
 
-	int cost;
+	cost_t cost;
 
 	void reset() {
 		value = regression_conjunctions.size();
@@ -80,9 +85,9 @@ using CounterGroupIndex = std::vector<CounterGroup>::size_type;
 
 struct Conjunction {
 
-	Conjunction(const FactSet &facts, bool is_subgoal) :
+	Conjunction(FactSet facts, bool is_subgoal) :
 		id(id_counter++),
-		facts(facts),
+		facts(std::move(facts)),
 		counter_groups(),
 		regression_of(),
 		supporters(),
@@ -112,7 +117,7 @@ struct Conjunction {
 	// true in the current state
 	bool initially_true;
 
-	int cost;
+	cost_t cost;
 
 	// successors in the BSG
 	std::vector<int> required_by;
@@ -146,11 +151,11 @@ inline auto operator<<(std::ostream &out, const Conjunction &conjunction) -> std
 
 struct BSGNode {
 
-	BSGNode(const Action *action, const std::vector<Conjunction *> &supported_conjunctions, const std::vector<Conjunction *> &precondition_conjunctions, const FactSet &precondition_facts) :
+	BSGNode(const Action *action, std::vector<Conjunction *> supported_conjunctions, std::vector<Conjunction *> precondition_conjunctions, FactSet precondition_facts) :
 		action(action),
-		supported_conjunctions(supported_conjunctions),
-		precondition_conjunctions(precondition_conjunctions),
-		precondition_facts(precondition_facts),
+		supported_conjunctions(std::move(supported_conjunctions)),
+		precondition_conjunctions(std::move(precondition_conjunctions)),
+		precondition_facts(std::move(precondition_facts)),
 		visited(false),
 		branch_preconditions(),
 		branch_deleted_facts() {}
@@ -182,7 +187,7 @@ struct BestSupporterGraph {
 		return nodes[pos];
 	}
 
-	auto operator[](size_type pos) const -> const BSGNode &{
+	auto operator[](size_type pos) const -> const BSGNode & {
 		return nodes[pos];
 	}
 
@@ -197,7 +202,7 @@ struct BestSupporterGraph {
 		nodes.clear();
 	}
 
-	auto get_end_node() const -> const BSGNode &{
+	auto get_end_node() const -> const BSGNode & {
 		return nodes.front();
 	}
 
@@ -218,6 +223,12 @@ struct BestSupporterGraph {
 		return std::distance(std::begin(all_actions), std::unique(std::begin(all_actions), std::end(all_actions)));
 	}
 
+	auto get_real_cost() -> int {
+		assert(!nodes.empty());
+		assert(nodes.front().action->id == -1);
+		return std::accumulate(std::begin(nodes) + 1, std::end(nodes), 0, [](auto sum, const auto &node) { return sum + node.action->op->get_global_operator()->get_cost(); });
+	}
+
 };
 
 inline auto operator<<(std::ostream &out, const BestSupporterGraph &bsg) -> std::ostream & {
@@ -227,40 +238,40 @@ inline auto operator<<(std::ostream &out, const BestSupporterGraph &bsg) -> std:
 	return out << "########################" << std::endl;
 }
 
-inline auto is_regressable(const Action &action, const FactSet &g) -> bool {
+inline auto is_regressable(const Action &action, const FactSet &facts) -> bool {
 	const auto &pre = action.pre;
 	const auto &eff = action.eff;
 
 	assert(std::is_sorted(pre.begin(), pre.end()) && "fact sets should always be sorted!");
 	assert(std::is_sorted(pre.begin(), pre.end()) && "fact sets should always be sorted!");
-	assert(std::is_sorted(g.begin(), g.end()) && "fact sets should always be sorted!");
+	assert(std::is_sorted(facts.begin(), facts.end()) && "fact sets should always be sorted!");
 
-	// check conditions (i) and (ii)
-	auto g_iterator = g.begin();
-	auto a_achieves_part_of_g = false;
+	// the action must achieve at least one of the facts and can't contradict any of them
+	auto facts_it = facts.begin();
+	auto achieves_some_part = false;
 	for (const auto &fact : eff) {
-		while (g_iterator != g.end() && g_iterator->var < fact.var)
-			++g_iterator;
-		if (g_iterator == g.end())
+		while (facts_it != facts.end() && facts_it->var < fact.var)
+			++facts_it;
+		if (facts_it == facts.end())
 			break;
-		if (fact.var == g_iterator->var) {
-			// if eff contradicts g, the regression is undefined
-			if (fact.value != g_iterator->value)
+		if (fact.var == facts_it->var) {
+			// the regression is undefined if there are contradicting effects
+			if (fact.value != facts_it->value)
 				return false;
-			a_achieves_part_of_g = true;
+			achieves_some_part = true;
 		}
 	}
-	if (!a_achieves_part_of_g)
+	if (!achieves_some_part)
 		return false;
 
-	// check condition (iii)
-	g_iterator = g.begin();
+	// the action must not have any contradicting prevails
+	facts_it = facts.begin();
 	for (const auto &fact : pre) {
-		while (g_iterator != g.end() && g_iterator->var < fact.var)
-			++g_iterator;
-		if (g_iterator == g.end())
+		while (facts_it != facts.end() && facts_it->var < fact.var)
+			++facts_it;
+		if (facts_it == facts.end())
 			break;
-		if (fact.var == g_iterator->var && fact.value != g_iterator->value) {
+		if (fact.var == facts_it->var && fact.value != facts_it->value) {
 			auto eff_defined = false;
 			for (const auto &eff_fact : eff) {
 				if (eff_fact.var == fact.var) {
@@ -273,6 +284,18 @@ inline auto is_regressable(const Action &action, const FactSet &g) -> bool {
 		}
 	}
 	return true;
+}
+
+inline auto is_regressable_and_mutex_free(const Action &action, const FactSet &facts, const AbstractTask &task) -> bool {
+	// the fact set is regressable over the action and all of the facts are either added by the action or not mutex with the precondtions and other effects
+	return is_regressable(action, facts) && std::all_of(std::begin(facts), std::end(facts), [&task, &action](const auto &f) {
+		assert(std::is_sorted(std::begin(action.eff), std::end(action.eff)));
+		if (std::binary_search(std::begin(action.eff), std::end(action.eff), f))
+			return true;
+		auto is_mutex_with_f = [&f, &task](const auto &g) { return task.are_facts_mutex(f, g); };
+		return std::none_of(std::begin(action.pre), std::end(action.pre), is_mutex_with_f)
+			&& std::none_of(std::begin(action.eff), std::end(action.eff), is_mutex_with_f);
+	});
 }
 
 inline auto compute_regression(const Action &action, const FactSet &g) -> FactSet {

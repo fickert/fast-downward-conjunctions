@@ -1,11 +1,13 @@
 #pragma once
 
 #include <vector>
+#include <numeric>
 
 #include "conjunctions.h"
+#include "../globals.h"
+#include "../state_registry.h"
 #include "../task_tools.h"
 #include "../utils/timer.h"
-#include <numeric>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -69,6 +71,20 @@ inline auto action_representative_edeletes_conjunction(const AbstractTask &task,
 	return std::any_of(std::begin(conjunction->facts), std::end(conjunction->facts), edeletes_fact);
 }
 
+inline auto action_representative_edeletes_fact(const AbstractTask &task, const FactSet &preconditions, const FactSet &effects, const FactPair &f) -> bool {
+	if (std::find(effects.begin(), effects.end(), f) != effects.end())
+		return false;
+	auto is_mutex_with_f = [&task, &f](const FactPair &g) { return task.are_facts_mutex(f, g); };
+	return std::any_of(preconditions.begin(), preconditions.end(), is_mutex_with_f) || std::any_of(effects.begin(), effects.end(), is_mutex_with_f);
+}
+
+inline auto action_representative_edeletes_conjunction(const AbstractTask &task, const FactSet &preconditions, const FactSet &effects, const Conjunction *conjunction) -> bool {
+	auto edeletes_fact = [&task, &preconditions, &effects](const FactPair &f) {
+		return action_representative_edeletes_fact(task, preconditions, effects, f);
+	};
+	return std::any_of(std::begin(conjunction->facts), std::end(conjunction->facts), edeletes_fact);
+}
+
 inline auto get_edeleted_facts(const AbstractTask &task, const BSGNode &bsg_node, const FactSet &facts) -> FactSet {
 	auto edeletes_fact = [&task, &bsg_node](const FactPair &f) {
 		return action_representative_edeletes_fact(task, bsg_node, f);
@@ -84,7 +100,7 @@ inline auto get_edeleted_facts(const AbstractTask &task, const BSGNode &bsg_node
 
 inline auto get_all_conjunctions(const FactSet &facts, const std::vector<std::vector<std::vector<Conjunction *>>> &conjunctions_containing_fact) -> std::vector<Conjunction *> {
 	auto conjunctions_from_fact_set = std::vector<Conjunction *>();
-	// avoid doing too many memory allocations
+	// avoid too many memory allocations by reserving a lot of space early, and then calling shrink_to_fit() afterwards
 	conjunctions_from_fact_set.reserve(64);
 	for (const auto &fact : facts)
 		for (auto conjunction : conjunctions_containing_fact[fact.var][fact.value])
@@ -114,23 +130,101 @@ inline auto get_non_dominated_conjunctions(const FactSet &facts, const std::vect
 	return get_non_dominated_conjunctions(get_all_conjunctions(facts, conjunctions_containing_fact));
 }
 
-inline auto is_valid_plan_in_the_original_task(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &task) -> bool {
-	// successively try to apply each action in the relaxed plan and check for a goal state
+namespace detail {
+
+	inline auto get_applicable_sequence_length_and_state(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &task) -> std::pair<decltype(bsg.nodes.size()), std::vector<int>> {
+		// successively try to apply each action in the relaxed plan and check for a goal state, returning the index of the first action that fails
+		auto num_applicable = static_cast<decltype(bsg.nodes.size())>(0);
+		auto is_satisfied = [&state_values](const auto &p) { return state_values[p.var] == p.value; };
+		for (auto bsg_it = std::rbegin(bsg.nodes); bsg_it != std::rend(bsg.nodes) - 1; ++bsg_it) {
+			const auto &bsg_node = *bsg_it;
+			assert(bsg_node.action);
+			if (!std::all_of(std::begin(bsg_node.action->pre), std::end(bsg_node.action->pre), is_satisfied))
+				return {num_applicable, state_values};
+			for (auto &eff : bsg_node.action->eff)
+				state_values[eff.var] = eff.value;
+			++num_applicable;
+		}
+		for (auto i = 0; i < task.get_num_goals(); ++i) {
+			const auto goal_fact = task.get_goal_fact(i);
+			if (state_values[goal_fact.var] != goal_fact.value)
+				return {num_applicable, state_values};
+		}
+		assert(bsg.nodes.size() == num_applicable + 1);
+		return {bsg.nodes.size(), state_values};
+	}
+
+}
+
+inline auto get_applicable_sequence_length(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &task) -> decltype(bsg.nodes.size()) {
+	return detail::get_applicable_sequence_length_and_state(bsg, state_values, task).first;
+}
+
+inline auto get_sequence_to_first_deleter_length(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &task) -> decltype(bsg.nodes.size()) {
+	auto tmp = detail::get_applicable_sequence_length_and_state(bsg, state_values, task);
+	auto &num_applicable = tmp.first;
+	auto &resulting_state_values = tmp.second;
+	if (num_applicable == bsg.nodes.size())
+		return num_applicable;
+	auto &failed = bsg.nodes[bsg.nodes.size() - num_applicable - 1];
+	auto deleted_facts = FactSet();
+	auto is_not_satisfied = [&resulting_state_values](const auto &p) { return resulting_state_values[p.var] != p.value; };
+	if (num_applicable != bsg.nodes.size() - 1)
+		std::copy_if(std::begin(failed.action->pre), std::end(failed.action->pre), std::back_inserter(deleted_facts), is_not_satisfied);
+	else
+		std::copy_if(std::begin(failed.precondition_facts), std::end(failed.precondition_facts), std::back_inserter(deleted_facts), is_not_satisfied);
+	assert(!deleted_facts.empty());
+
+	auto get_num_actions_before_deleter = [&bsg, &task, num_applicable](const auto &deleted_fact) {
+		auto is_deleter = [&deleted_fact, &task](const auto &bsg_node) {
+			assert(bsg_node.action);
+			const auto &eff = bsg_node.action->eff;
+			if (std::find(std::begin(eff), std::end(eff), deleted_fact) != std::end(eff))
+				return false;
+			auto is_mutex_with_deleted_fact = [&task, &deleted_fact](const auto &f) { return task.are_facts_mutex(f, deleted_fact); };
+			return std::any_of(std::begin(eff), std::end(eff), is_mutex_with_deleted_fact);
+		};
+		assert(std::find_if(std::end(bsg.nodes) - num_applicable, std::end(bsg.nodes), is_deleter) != std::end(bsg.nodes));
+		return static_cast<decltype(bsg.nodes.size())>(std::end(bsg.nodes) - std::find_if(std::end(bsg.nodes) - num_applicable, std::end(bsg.nodes), is_deleter));
+	};
+
+	auto min_sequence_length = bsg.nodes.size();
+	for (const auto &deleted_fact : deleted_facts)
+		min_sequence_length = std::min(min_sequence_length, get_num_actions_before_deleter(deleted_fact));
+	assert(min_sequence_length > 0u);
+	return min_sequence_length;
+}
+
+inline auto get_applicable_as_intended_sequence_length(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &) -> decltype(bsg.nodes.size()) {
+	// successively try to apply each action in the relaxed plan (while making sure the actions achieve the intended conjunctions)
+	// and check for a goal state, returning the index of the first action that fails
+	auto num_applicable = static_cast<decltype(bsg.nodes.size())>(0);
 	auto is_satisfied = [&state_values](const auto &p) { return state_values[p.var] == p.value; };
 	for (const auto &bsg_node : boost::adaptors::reverse(bsg.nodes)) {
-		if (!bsg_node.action->op)
-			break;
-		if (!std::all_of(std::begin(bsg_node.action->pre), std::end(bsg_node.action->pre), is_satisfied))
-			return false;
-		for (auto &eff : bsg_node.action->eff)
-			state_values[eff.var] = eff.value;
+		if (!std::all_of(std::begin(bsg_node.precondition_facts), std::end(bsg_node.precondition_facts), is_satisfied))
+			return num_applicable;
+		++num_applicable;
+		if (bsg_node.action)
+			for (auto &eff : bsg_node.action->eff)
+				state_values[eff.var] = eff.value;
 	}
-	for (auto i = 0; i < task.get_num_goals(); ++i) {
-		const auto goal_fact = task.get_goal_fact(i);
-		if (state_values[goal_fact.var] != goal_fact.value)
+	assert(num_applicable == bsg.nodes.size());
+	return num_applicable;
+}
+
+inline auto is_valid_plan_in_the_original_task(const BestSupporterGraph &bsg, std::vector<int> state_values, const AbstractTask &task) -> bool {
+	return get_applicable_sequence_length(bsg, state_values, task) == bsg.nodes.size();
+}
+
+inline auto is_valid_plan_in_the_original_task_with_conditional_effects(const BestSupporterGraph &bsg, StateRegistry &state_registry, const GlobalState &state) -> bool {
+	auto current_state = state;
+	for (auto bsg_it = std::rbegin(bsg.nodes); bsg_it != std::rend(bsg.nodes) - 1; ++bsg_it) {
+		const auto &op = bsg_it->action->op->get_global_operator();
+		if (!op->is_applicable(current_state))
 			return false;
+		current_state = state_registry.get_successor_state(current_state, *op);
 	}
-	return true;
+	return test_goal(current_state);
 }
 
 class TimedPrinter {

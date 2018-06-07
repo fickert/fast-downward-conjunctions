@@ -73,8 +73,8 @@ void HSPMaxHeuristic::relaxed_exploration() {
             prop->precondition_of;
         for (UnaryOperator *unary_op : triggered_operators) {
             --unary_op->unsatisfied_preconditions;
-            unary_op->cost = max(unary_op->cost,
-                                 unary_op->base_cost + prop_cost);
+            unary_op->cost = max<int>(unary_op->cost,
+                                      unary_op->base_cost + prop_cost);
             assert(unary_op->unsatisfied_preconditions >= 0);
             if (unary_op->unsatisfied_preconditions == 0)
                 enqueue_if_necessary(unary_op->effect, unary_op->cost);

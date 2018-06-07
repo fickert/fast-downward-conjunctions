@@ -66,6 +66,8 @@ public:
 
     void dump() const;
     void print_statistics() const;
+
+	void clear();
 };
 
 #endif
