@@ -5,6 +5,7 @@ This is a fork of [Fast Downward](http://www.fast-downward.org/) extended with a
 * M. Fickert and J. Hoffmann: [Complete Local Search: Boosting Hill-Climbing through Online Relaxation Refinement](http://fai.cs.uni-saarland.de/hoffmann/papers/icaps17a.pdf) (ICAPS'17)
 * M. Fickert and J. Hoffmann: [Ranking Conjunctions for Partial Delete Relaxation Heuristics in Planning](http://fai.cs.uni-saarland.de/hoffmann/papers/socs17b.pdf) (SOCS'17)
 * M. Fickert: [Making Hill-Climbing Great Again through Online Relaxation Refinement and Novelty Pruning](http://fai.cs.uni-saarland.de/fickert/papers/socs18.pdf) (SOCS'18)
+* M. Fickert: [A Novel Lookahead Strategy for Delete Relaxation Heuristics in Greedy Best-First Search](http://fai.cs.uni-saarland.de/fickert/papers/icaps20.pdf) (ICAPS'20)
 
 It is also the code base of the OLCFF planner that competes in the [International Planning Competition 2018](https://ipc2018-classical.bitbucket.io/).
 
