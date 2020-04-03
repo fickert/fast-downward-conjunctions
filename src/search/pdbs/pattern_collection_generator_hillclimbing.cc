@@ -300,6 +300,8 @@ void PatternCollectionGeneratorHillclimbing::hill_climbing(
 
 PatternCollectionInformation PatternCollectionGeneratorHillclimbing::generate(shared_ptr<AbstractTask> task) {
     TaskProxy task_proxy(*task);
+    SuccessorGenerator successor_generator(task);
+
     utils::Timer timer;
     double average_operator_cost = get_average_operator_cost(task_proxy);
     cout << "Average operator cost: " << average_operator_cost << endl;
@@ -333,7 +335,7 @@ PatternCollectionInformation PatternCollectionGeneratorHillclimbing::generate(sh
                (contains the new_candidates after each call to
                generate_candidate_patterns) */
             hill_climbing(
-                task_proxy, average_operator_cost,
+                task_proxy, successor_generator, average_operator_cost,
                 initial_candidate_patterns);
         cout << "Pattern generation (Haslum et al.) time: " << timer << endl;
     }

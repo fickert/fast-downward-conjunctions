@@ -72,8 +72,16 @@ protected:
 	std::unique_ptr<EdgeOpenList> open_list;
 
 	// Search behavior parameters
-	bool randomize_successors;
-	bool preferred_successors_first;
+	const bool randomize_successors;
+
+	// random number generator for successor randomization
+	std::mt19937 urng;
+
+	enum class PreferredUsage {
+		ALTERNATING,
+		PRUNE_BY_PREFERRED,
+		RANK_PREFERRED_FIRST
+	} const preferred_usage;
 
 	std::vector<Heuristic *> heuristics;
 	std::vector<Heuristic *> preferred_operator_heuristics;
@@ -105,7 +113,7 @@ protected:
 	void print_min_set_statistics() const;
 	void print_intermediate_statistics(const ConjunctionsHeuristic &) const override;
 
-	void update_min_set();
+	auto update_min_set() -> bool;
 	auto do_learning() -> bool;
 	auto get_learning_target() const -> int;
 	void remove_current_state_from_open_successors(const SearchNode &);
@@ -160,11 +168,16 @@ public:
 	template<typename LazySearchMinSetDerived, typename = std::enable_if<std::is_base_of<LazySearchMinSet, LazySearchMinSetDerived>::value>>
 	static auto _set_open_list_and_create_search_engine(options::OptionParser &parser) -> SearchEngine * {
 		auto opts = parser.parse();
-
 		if (parser.help_mode() || parser.dry_run())
 			return nullptr;
-
-		opts.set("open", search_common::create_greedy_open_list_factory(opts));
+		auto evals = opts.get_list<ScalarEvaluator *>("evals");
+		auto preferred = opts.get_list<Heuristic *>("preferred");
+		if (PreferredUsage(opts.get_enum("preferred_usage")) == PreferredUsage::PRUNE_BY_PREFERRED
+			&& evals.size() == 1 && preferred.size() == 1 && evals.front() == preferred.front()) {
+			opts.set("open", search_common::create_standard_scalar_open_list_factory(evals.front(), false));
+		} else {
+			opts.set("open", search_common::create_greedy_open_list_factory(opts));
+		}
 		auto engine = new LazySearchMinSetDerived(opts);
 		auto preferred_list = opts.get_list<Heuristic *>("preferred");
 		engine->set_pref_operator_heuristics(preferred_list);

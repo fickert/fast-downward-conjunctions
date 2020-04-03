@@ -86,6 +86,13 @@ GlobalState StateRegistry::get_successor_state(const GlobalState &predecessor, c
     return lookup_state(id);
 }
 
+GlobalState StateRegistry::import_state(const GlobalState &state) {
+    if (&state.get_registry() == this)
+        return state;
+    state_data_pool.push_back(state.get_packed_buffer());
+    return lookup_state(insert_id_or_pop_state());
+}
+
 int StateRegistry::get_bins_per_state() const {
     return state_packer.get_num_bins();
 }

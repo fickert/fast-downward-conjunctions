@@ -53,7 +53,7 @@ private:
 		UNREACHABILITY,
 		MIN_COST,
 		MAX_COST,
-		MIN_COST_INCREASE,          // probably the most useless strategy
+		MIN_COST_INCREASE,
 		MAX_COST_INCREASE,
 		FEWEST_COUNTERS,            // can be set at the end
 		FEWEST_COUNTERS_ESTIMATE,   // can be set at the end
@@ -79,6 +79,8 @@ private:
 	const std::vector<ScoringMethod> online_scoring;
 	const std::vector<ScoringMethod> annotations_after_priority;
 
+	const int fewest_counters_estimation_threshold;
+
 	static auto get_score(const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double;
 	static auto get_score(const FactSet &facts, const ConjunctionsHeuristic &heuristic, ScoringMethod scoring) -> double;
 	static auto combine_scores(double score1, double score2, ScoringMethod scoring) -> double;
@@ -100,7 +102,8 @@ private:
 			max_tie_break_size(0),
 			total_tie_break_size(0),
 			max_num_conflicts(0),
-			total_num_conflicts(0) {}
+			total_num_conflicts(0),
+			num_fewest_counters_estimate_switches(0) {}
 
 		auto get_avg_tie_break_size() const -> double {
 			return num_conflict_selections == 0 ? 0. : total_tie_break_size / static_cast<double>(num_conflict_selections);
@@ -129,11 +132,12 @@ private:
 		long int total_tie_break_size;
 		int max_num_conflicts;
 		long int total_num_conflicts;
+		int num_fewest_counters_estimate_switches;
 	} statistics;
 
 	std::unique_ptr<TimedPrinter> statistics_printer;
 
-	void print_statistics();
+	void print_statistics() const;
 
 	template<typename ConflictType = FactSet>
 	struct ConflictExtractionHelper {
@@ -168,9 +172,9 @@ private:
 #endif
 		static void append_conflicts(std::vector<FactSet> &converted, ConflictSet &&conflicts);
 
-		static auto apply_tie_breaking(std::vector<ConflictSet> &&conflicts, const std::vector<ScoringMethod> &scoring, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics) -> std::vector<FactSet>;
-		static auto apply_tie_breaking(ConflictSet &&conflicts, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics) -> std::vector<FactSet>;
-		static void apply_tie_breaking(ConflictIterator conflicts_begin, ConflictIterator conflicts_end, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, ScoringIndex current_annotation_index, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics);
+		static auto apply_tie_breaking(std::vector<ConflictSet> &&conflicts, const std::vector<ScoringMethod> &scoring, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics) -> std::vector<FactSet>;
+		static auto apply_tie_breaking(ConflictSet &&conflicts, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics) -> std::vector<FactSet>;
+		static void apply_tie_breaking(ConflictIterator conflicts_begin, ConflictIterator conflicts_end, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, ScoringIndex current_annotation_index, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics);
 
 		// conflict generation
 		static void add_combined_conflict(ConflictSet &conflicts, const Conjunction &c1, const Conjunction &c2, const BSGNode &deleter, const FactPair &deleted, int rp_distance, const ConjunctionsHeuristic &heuristic, const std::vector<ScoringMethod> &online_scoring);

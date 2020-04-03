@@ -61,6 +61,7 @@ void LazySearch::initialize() {
     assert(!heuristics.empty());
     const GlobalState &initial_state = state_registry.get_initial_state();
     for (Heuristic *heuristic : heuristics) {
+		heuristic->initialize_if_necessary(state_registry);
         heuristic->notify_initial_state(initial_state);
     }
 }
@@ -207,6 +208,19 @@ SearchStatus LazySearch::step() {
                 print_checkpoint_line(current_g);
                 reward_progress();
             }
+
+			for (const auto *heuristic : heuristics) {
+				if (heuristic->found_solution()) {
+					auto plan = Plan();
+					if (current_state.get_id() != state_registry.get_initial_state().get_id())
+						search_space.trace_path(current_state, plan);
+					const auto suffix = heuristic->get_solution();
+					plan.insert(std::end(plan), std::begin(suffix), std::end(suffix));
+					set_plan(plan);
+					return SOLVED;
+				}
+			}
+
             generate_successors();
             statistics.inc_expanded();
         } else {

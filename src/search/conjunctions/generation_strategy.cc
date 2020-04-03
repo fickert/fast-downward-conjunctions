@@ -24,16 +24,16 @@ ConjunctionGenerationStrategy::ConjunctionGenerationStrategy(const options::Opti
 
 ConjunctionGenerationStrategy::~ConjunctionGenerationStrategy() {}
 
-auto ConjunctionGenerationStrategy::modify_conjunctions(ConjunctionsHeuristic &heuristic, Event event, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registy) -> Result {
+auto ConjunctionGenerationStrategy::modify_conjunctions(ConjunctionsHeuristic &heuristic, Event event, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	switch (event) {
 	case Event::INITIALIZATION:
-		return modify_conjunctions_init(heuristic, task, eval_context, state_registy);
+		return modify_conjunctions_init(heuristic, task, eval_context);
 	case Event::STEP:
-		return modify_conjunctions_step(heuristic, task, eval_context, state_registy);
+		return modify_conjunctions_step(heuristic, task, eval_context);
 	case Event::LOCAL_MINIMUM:
-		return modify_conjunctions_local_minimum(heuristic, task, eval_context, state_registy);
+		return modify_conjunctions_local_minimum(heuristic, task, eval_context);
 	case Event::NEW_BEST_H:
-		return modify_conjunctions_new_best_h(heuristic, task, eval_context, state_registy);
+		return modify_conjunctions_new_best_h(heuristic, task, eval_context);
 	default:
 		assert(false && "unknown event");
 		exit(1);
@@ -56,7 +56,7 @@ void ConflictExtractionStrategy::add_options(options::OptionParser &parser) {
 	parser.add_option<bool>("check_relaxed_plan", "check if relaxed plan is valid before attempting to learn conjunctions", "true");
 }
 
-auto ConflictExtractionStrategy::generate_conjunctions(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry, int count) -> std::pair<Result, std::vector<FactSet>> {
+auto ConflictExtractionStrategy::generate_conjunctions(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, int count) -> std::pair<Result, std::vector<FactSet>> {
 	auto &cached_result = const_cast<HeuristicCache &>(eval_context.get_cache())[&heuristic];
 	if (!cached_result.is_uninitialized())
 		cached_result = EvaluationResult();
@@ -66,12 +66,12 @@ auto ConflictExtractionStrategy::generate_conjunctions(ConjunctionsHeuristic &he
 
 	assert(!bsg.nodes.empty() && "The last bsg should not be empty here. Make sure the 'cache_estimates' option of the heuristic is disabled.");
 
-	if (state_registry && check_relaxed_plan && is_valid_plan_in_the_original_task_with_conditional_effects(bsg, *state_registry, eval_context.get_state()))
+	if (check_relaxed_plan && is_valid_plan_in_the_original_task(bsg, eval_context.get_state().get_values(), task))
 		return {Result::SOLVED, {}};
 
 	auto conjunctions_to_add = conflict_extraction->generate_candidate_conjunctions(task, bsg, heuristic, count);
 	assert(!conjunctions_to_add.empty() || is_valid_plan_in_the_original_task(bsg, eval_context.get_state().get_values(), task));
-	return {conjunctions_to_add.empty() ? (state_registry && is_valid_plan_in_the_original_task_with_conditional_effects(bsg, *state_registry, eval_context.get_state()) ? Result::SOLVED : Result::FAILED) : Result::MODIFIED, std::move(conjunctions_to_add)};
+	return {conjunctions_to_add.empty() ? Result::SOLVED : Result::MODIFIED, std::move(conjunctions_to_add)};
 }
 
 void ConflictExtractionStrategy::dump_options() const {
@@ -92,7 +92,7 @@ auto GenerateAllBoundedSize::modifies_conjunctions_at_event(Event e) const -> bo
 	return e == Event::INITIALIZATION;
 }
 
-auto GenerateAllBoundedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &, StateRegistry *) -> Result {
+auto GenerateAllBoundedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &) -> Result {
 	auto all_combinations = std::vector<FactSet>();
 	get_all_combinations(all_combinations, {}, m, task);
 	assert(std::is_sorted(std::begin(all_combinations), std::end(all_combinations)));
@@ -149,7 +149,7 @@ GenerateInitially::GenerateInitially(const options::Options &opts) :
 
 GenerateInitially::~GenerateInitially() {}
 
-auto GenerateInitially::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto GenerateInitially::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	auto modified = false;
 	auto end_time = std::chrono::steady_clock::now() + std::chrono::seconds(learning_time);
 	while (std::chrono::steady_clock::now() < end_time
@@ -157,7 +157,7 @@ auto GenerateInitially::modify_conjunctions_init(ConjunctionsHeuristic &heuristi
 		&& heuristic.get_counter_growth() < counter_growth_bound
 		&& heuristic.get_counter_size_growth() < counter_sum_growth_bound) {
 
-		auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		if (result.first != Result::MODIFIED)
 			return result.first;
 		heuristic.add_conjunctions(result.second);
@@ -203,7 +203,7 @@ static auto _parse_generate_initially(options::OptionParser &parser) -> std::sha
 LoadFromFile::LoadFromFile(const options::Options &opts) :
 	ConjunctionGenerationStrategy(opts),
 	file_name(opts.get<std::string>("file_name")) {
-	if (!std::experimental::filesystem::exists(std::experimental::filesystem::path(file_name))) {
+	if (!std::filesystem::exists(std::filesystem::path(file_name))) {
 		std::cout << "File not found: " << file_name << std::endl;
 		utils::exit_with(utils::ExitCode::INPUT_ERROR);
 	}
@@ -215,7 +215,7 @@ auto LoadFromFile::modifies_conjunctions_at_event(Event e) const -> bool {
 	return e == Event::INITIALIZATION;
 }
 
-auto LoadFromFile::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &, EvaluationContext &, StateRegistry *) -> Result {
+auto LoadFromFile::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &, EvaluationContext &) -> Result {
 	auto parse_fact = [](const std::string &line, int begin_index) {
 		assert(line[begin_index] == '(');
 		auto sep_index = line.find(',', begin_index);
@@ -274,7 +274,7 @@ static auto _parse_load_from_file(options::OptionParser &parser) -> std::shared_
 // generate a specific number of conjunctions that is read from a file
 
 auto ReadCountFromFile::read_count(const std::string &file_name) -> int {
-	if (!std::experimental::filesystem::exists(std::experimental::filesystem::path(file_name))) {
+	if (!std::filesystem::exists(std::filesystem::path(file_name))) {
 		std::cout << "File not found: " << file_name << std::endl;
 		utils::exit_with(utils::ExitCode::INPUT_ERROR);
 	}
@@ -294,10 +294,10 @@ auto ReadCountFromFile::modifies_conjunctions_at_event(Event e) const -> bool {
 	return e == Event::INITIALIZATION;
 }
 
-auto ReadCountFromFile::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto ReadCountFromFile::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	auto num_added = 0;
 	while (num_added < count) {
-		auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		if (result.first != Result::MODIFIED)
 			return result.first;
 		heuristic.add_conjunctions(result.second);
@@ -426,21 +426,21 @@ auto MaintainFixedSize::modifies_conjunctions_at_event(Event e) const -> bool {
 		|| GenerateInitially::modifies_conjunctions_at_event(e);
 }
 
-auto MaintainFixedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto MaintainFixedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	switch (initial_removal_mode) {
 	case detail::InitialRemovalMode::NONE:
-		return GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context, state_registry);
+		return GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
 	case detail::InitialRemovalMode::ALL: {
 		const auto removed = heuristic.get_num_added_conjunctions() > 0;
 		heuristic.remove_all_conjunctions();
-		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context, state_registry);
+		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
 		if (result == Result::UNMODIFIED)
 			return removed ? Result::MODIFIED : Result::UNMODIFIED;
 		return result;
 	}
 	case detail::InitialRemovalMode::UNTIL_BOUND: {
 		const auto removed = detail::remove_conjunctions_until_bound_reached(heuristic, removal_strategy, min_evaluations, conjunction_growth_bound, counter_growth_bound, counter_sum_growth_bound);
-		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context, state_registry);
+		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
 		if (result == Result::UNMODIFIED)
 			return removed ? Result::MODIFIED : Result::UNMODIFIED;
 		return result;
@@ -451,12 +451,12 @@ auto MaintainFixedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristi
 	}
 }
 
-auto MaintainFixedSize::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto MaintainFixedSize::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	if (++states_counter % replacement_frequency != 0)
 		return Result::UNMODIFIED;
 	remove_conjunctions(heuristic, replacement_count, removal_strategy, min_evaluations);
 	removed_conjunction = true;
-	auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+	auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 	if (result.first != Result::MODIFIED)
 		return result.first;
 	heuristic.add_conjunctions(result.second);
@@ -504,7 +504,7 @@ auto MaintainFixedSizeProbabilistic::modifies_conjunctions_at_event(Event e) con
 		|| (e == Event::INITIALIZATION && generate_initially);
 }
 
-auto MaintainFixedSizeProbabilistic::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto MaintainFixedSizeProbabilistic::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	auto removed = false;
 	switch (initial_removal_mode) {
 	case detail::InitialRemovalMode::NONE:
@@ -526,7 +526,7 @@ auto MaintainFixedSizeProbabilistic::modify_conjunctions_init(ConjunctionsHeuris
 	auto added = false;
 	const auto end_time = std::chrono::steady_clock::now() + std::chrono::seconds(300);
 	while (std::chrono::steady_clock::now() < end_time && heuristic.get_counter_growth() < target_growth_ratio) {
-		auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		assert(result.first != Result::UNMODIFIED);
 		if (result.first != Result::MODIFIED)
 			return result.first;
@@ -539,7 +539,7 @@ auto MaintainFixedSizeProbabilistic::modify_conjunctions_init(ConjunctionsHeuris
 	return added || removed ? Result::MODIFIED : Result::UNMODIFIED;
 }
 
-auto MaintainFixedSizeProbabilistic::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto MaintainFixedSizeProbabilistic::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	const auto removal_probability = std::pow(base_probability, target_growth_ratio / heuristic.get_counter_growth());
 	assert(heuristic.get_counter_growth() > target_growth_ratio || removal_probability <= base_probability);
 	assert(heuristic.get_counter_growth() < target_growth_ratio || removal_probability >= base_probability);
@@ -553,7 +553,7 @@ auto MaintainFixedSizeProbabilistic::modify_conjunctions_step(ConjunctionsHeuris
 	assert(heuristic.get_counter_growth() > target_growth_ratio || add_probability >= base_probability);
 	assert(heuristic.get_counter_growth() < target_growth_ratio || add_probability <= base_probability);
 	if (g_rng()->operator()() <= add_probability) {
-		auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		if (result.first != Result::MODIFIED)
 			return result.first;
 		modified = true;
@@ -588,6 +588,123 @@ static auto _parse_maintain_fixed_size_probabilistic(options::OptionParser &pars
 }
 
 
+// learn conjunctions until a bound x is reached, then replace conjunctions in local minima during search
+
+MaintainFixedSizeLocalMinima::MaintainFixedSizeLocalMinima(const options::Options &opts)
+	: GenerateInitially(opts),
+	  initial_removal_mode(detail::InitialRemovalMode(opts.get_enum("initial_removal_mode"))),
+	  removal_strategy(detail::RemovalStrategy(opts.get_enum("removal_strategy"))),
+	  min_evaluations(opts.get<int>("min_evaluations")),
+	  replacement_count(opts.get<int>("replacement_count")),
+	  removed_conjunction(false) {}
+
+auto MaintainFixedSizeLocalMinima::modifies_conjunctions_at_event(Event e) const -> bool {
+	return e == Event::LOCAL_MINIMUM
+		|| (e == Event::INITIALIZATION && initial_removal_mode != detail::InitialRemovalMode::NONE)
+		|| GenerateInitially::modifies_conjunctions_at_event(e);
+}
+
+auto MaintainFixedSizeLocalMinima::modify_conjunctions_init(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	switch (initial_removal_mode) {
+	case detail::InitialRemovalMode::NONE:
+		return GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
+	case detail::InitialRemovalMode::ALL: {
+		const auto removed = heuristic.get_num_added_conjunctions() > 0;
+		heuristic.remove_all_conjunctions();
+		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
+		if (result == Result::UNMODIFIED)
+			return removed ? Result::MODIFIED : Result::UNMODIFIED;
+		return result;
+	}
+	case detail::InitialRemovalMode::UNTIL_BOUND: {
+		const auto removed = detail::remove_conjunctions_until_bound_reached(heuristic, removal_strategy, min_evaluations, conjunction_growth_bound, counter_growth_bound, counter_sum_growth_bound);
+		const auto result = GenerateInitially::modify_conjunctions_init(heuristic, task, eval_context);
+		if (result == Result::UNMODIFIED)
+			return removed ? Result::MODIFIED : Result::UNMODIFIED;
+		return result;
+	}
+	default:
+		std::cerr << "Unknown iniitial removal mode option:" << static_cast<int>(initial_removal_mode) << std::endl;
+		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	}
+}
+
+auto MaintainFixedSizeLocalMinima::modify_conjunctions_local_minimum(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	remove_conjunctions(heuristic, replacement_count, removal_strategy, min_evaluations);
+	removed_conjunction = true;
+	const auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
+	if (result.first != Result::MODIFIED)
+		return result.first;
+	heuristic.add_conjunctions(result.second);
+#ifndef NDEBUG
+	std::cout << "Current problem size factor in the number of conjunctions/counters: " << heuristic.get_conjunction_growth() << "/" << heuristic.get_counter_growth() << std::endl;
+#endif
+	return Result::MODIFIED;
+}
+
+void MaintainFixedSizeLocalMinima::dump_options() const {
+	GenerateInitially::dump_options();
+	detail::print_removal_strategy_options(removal_strategy, min_evaluations);
+	std::cout << "initial removal mode: " << initial_removal_mode << std::endl;
+	std::cout << "replacement count: " << replacement_count << std::endl;
+}
+
+static auto _parse_maintain_fixed_size_local_minima(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	GenerateInitially::add_options(parser);
+	detail::add_removal_strategy_options(parser);
+	parser.add_enum_option("initial_removal_mode", {"NONE", "ALL", "UNTIL_BOUND"}, "forget previously learned conjunctions at the initialization event", "NONE");
+	parser.add_option<int>("replacement_count", "number of conjunctions to replace in each iteration", "1");
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<MaintainFixedSizeLocalMinima>(parser.parse());
+}
+
+
+// learn conjunctions until a bound x is reached, then periodically add conjunctions during search
+
+AddPeriodically::AddPeriodically(const options::Options &opts)
+	: GenerateInitially(opts),
+	add_frequency(opts.get<int>("add_frequency")),
+	add_count(opts.get<int>("add_count")),
+	states_counter(0) {}
+
+AddPeriodically::~AddPeriodically() {}
+
+auto AddPeriodically::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	if (++states_counter % add_frequency != 0)
+		return Result::UNMODIFIED;
+	for (auto i = 0; i < add_count; ++i) {
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
+		if (result.first != Result::MODIFIED)
+			return result.first;
+		heuristic.add_conjunctions(result.second);
+#ifndef NDEBUG
+		std::cout << "Current problem size factor in the number of conjunctions/counters: " << heuristic.get_conjunction_growth() << "/" << heuristic.get_counter_growth() << std::endl;
+#endif
+	}
+	return Result::MODIFIED;
+}
+
+void AddPeriodically::dump_options() const {
+	GenerateInitially::dump_options();
+	std::cout << "add frequency: " << add_frequency << std::endl;
+	std::cout << "add count: " << add_count << std::endl;
+}
+
+auto AddPeriodically::modifies_conjunctions_at_event(Event e) const -> bool {
+	return e == Event::STEP || GenerateInitially::modifies_conjunctions_at_event(e);
+}
+
+static auto _parse_add_periodically(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	GenerateInitially::add_options(parser);
+	parser.add_option<int>("add_frequency", "add conjunctions every X states", "10");
+	parser.add_option<int>("add_count", "number of conjunctions to add in each iteration", "1", options::Bounds("1", ""));
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<AddPeriodically>(parser.parse());
+}
+
+
 // learn conjunctions every time a local minimum is reached
 
 EscapeLocalMinima::EscapeLocalMinima(const options::Options &opts) :
@@ -602,7 +719,7 @@ auto EscapeLocalMinima::modifies_conjunctions_at_event(Event e) const -> bool {
 	return e == Event::LOCAL_MINIMUM;
 }
 
-auto EscapeLocalMinima::modify_conjunctions_local_minimum(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context, StateRegistry *state_registry) -> Result {
+auto EscapeLocalMinima::modify_conjunctions_local_minimum(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
 	auto next_conjunction_growth_bound = heuristic.get_conjunction_growth() * conjunction_growth_bound;
 	auto next_counter_growth_bound = heuristic.get_counter_growth() * counter_growth_bound;
 	auto end_time = std::chrono::steady_clock::now() + std::chrono::seconds(learning_time);
@@ -611,7 +728,7 @@ auto EscapeLocalMinima::modify_conjunctions_local_minimum(ConjunctionsHeuristic 
 		&& heuristic.get_conjunction_growth() < next_conjunction_growth_bound
 		&& heuristic.get_counter_growth() < next_counter_growth_bound) {
 
-		auto result = generate_conjunctions(heuristic, task, eval_context, state_registry, conjunctions_per_iteration);
+		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		if (result.first != Result::MODIFIED)
 			return result.first;
 		heuristic.add_conjunctions(result.second);
@@ -646,6 +763,200 @@ static auto _parse_escape_local_minima(options::OptionParser &parser) -> std::sh
 }
 
 
+// learn a single conjunction every time a local minimum is reached, if the number of conjunctions exceeds a given bound replace an existing conjunction instead
+
+EscapeLocalMinimaBounded::EscapeLocalMinimaBounded(const options::Options &opts) :
+	EscapeLocalMinima(opts),
+	removal_strategy(detail::RemovalStrategy(opts.get_enum("removal_strategy"))),
+	min_evaluations(opts.get<int>("min_evaluations")),
+	replacement_threshold(opts.get<double>("replacement_threshold")),
+	reached_threshold(false) {}
+
+EscapeLocalMinimaBounded::~EscapeLocalMinimaBounded() {}
+
+auto EscapeLocalMinimaBounded::modify_conjunctions_local_minimum(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	auto removed = false;
+	if (heuristic.get_counter_growth() > replacement_threshold) {
+		detail::remove_conjunctions(heuristic, conjunctions_per_iteration, removal_strategy, min_evaluations);
+		removed = true;
+		reached_threshold = true;
+	}
+	auto result = EscapeLocalMinima::modify_conjunctions_local_minimum(heuristic, task, eval_context);
+	return result == Result::UNMODIFIED ? (removed ? Result::MODIFIED : Result::UNMODIFIED) : result;
+}
+
+auto EscapeLocalMinimaBounded::modifies_conjunctions_at_event(Event e) const -> bool {
+	return e == Event::LOCAL_MINIMUM;
+}
+
+void EscapeLocalMinimaBounded::dump_options() const {
+	EscapeLocalMinima::dump_options();
+	detail::print_removal_strategy_options(removal_strategy, min_evaluations);
+}
+
+static auto _parse_escape_local_minima_bounded(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	EscapeLocalMinima::add_options(parser);
+	detail::add_removal_strategy_options(parser);
+	parser.add_option<double>("replacement_threshold", "Growth bound size in the number of counters. After this threshold is reached, conjunctions are replaced instead of added.", "1.5");
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<EscapeLocalMinimaBounded>(parser.parse());
+}
+
+
+// learn a single conjunction every time a local minimum is reached, and forget all conjunctions on the start of each EHC phase
+
+EscapeLocalMinimaForgetAll::EscapeLocalMinimaForgetAll(const options::Options &opts) :
+	EscapeLocalMinima(opts) {}
+
+EscapeLocalMinimaForgetAll::~EscapeLocalMinimaForgetAll() {}
+
+auto EscapeLocalMinimaForgetAll::modifies_conjunctions_at_event(Event e) const -> bool {
+	return e == Event::LOCAL_MINIMUM;
+}
+
+auto EscapeLocalMinimaForgetAll::modify_conjunctions_new_best_h(ConjunctionsHeuristic &heuristic, const AbstractTask &, EvaluationContext &eval_context) -> Result {
+	if (heuristic.get_num_added_conjunctions() == 0)
+		return Result::UNMODIFIED;
+	heuristic.remove_all_conjunctions();
+	auto &cached_result = const_cast<HeuristicCache &>(eval_context.get_cache())[&heuristic];
+	if (!cached_result.is_uninitialized())
+		cached_result = EvaluationResult();
+	eval_context.get_result(&heuristic);
+	return eval_context.is_heuristic_infinite(&heuristic) ? Result::DEAD_END : Result::MODIFIED;
+}
+
+void EscapeLocalMinimaForgetAll::dump_options() const {
+	EscapeLocalMinima::dump_options();
+}
+
+static auto _parse_escape_local_minima_forget_all(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	EscapeLocalMinima::add_options(parser);
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<EscapeLocalMinimaForgetAll>(parser.parse());
+}
+
+
+// generate conjunctions whenever search is not making progress, forget conjunction whenever search does make progress
+
+DynamicBalancing::DynamicBalancing(const options::Options &opts) :
+	EscapeLocalMinima(opts),
+	removal_strategy(detail::RemovalStrategy(opts.get_enum("removal_strategy"))),
+	min_evaluations(opts.get<int>("min_evaluations")),
+	growth_exp(opts.get<double>("growth_exp")),
+	removed_conjunction(false) {}
+
+DynamicBalancing::~DynamicBalancing() {}
+
+auto DynamicBalancing::modify_conjunctions_new_best_h(ConjunctionsHeuristic &heuristic, const AbstractTask &, EvaluationContext &) -> Result {
+	if (is_progress_within_constraints(heuristic)) {
+		detail::remove_conjunctions(heuristic, 1, removal_strategy, min_evaluations);
+		removed_conjunction = true;
+		reset_progress_evaluation();
+		return Result::MODIFIED;
+	}
+	reset_progress_evaluation();
+	return Result::UNMODIFIED;
+}
+
+auto DynamicBalancing::modify_conjunctions_local_minimum(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	auto result = EscapeLocalMinima::modify_conjunctions_local_minimum(heuristic, task, eval_context);
+	reset_progress_evaluation();
+	return result;
+}
+
+void DynamicBalancing::dump_options() const {
+	EscapeLocalMinima::dump_options();
+	detail::print_removal_strategy_options(removal_strategy, min_evaluations);
+	std::cout << "growth exponent: " << growth_exp << std::endl;
+}
+
+auto DynamicBalancing::modifies_conjunctions_at_event(Event e) const -> bool {
+	switch (e) {
+	case Event::LOCAL_MINIMUM:
+	case Event::NEW_BEST_H:
+		return true;
+	default:
+		return false;
+	}
+}
+
+void DynamicBalancing::add_options(options::OptionParser &parser) {
+	EscapeLocalMinima::add_options(parser);
+	detail::add_removal_strategy_options(parser);
+	parser.add_option<double>("growth_exp", "exponent of the counter growth value in the removal condition calculation", "1.0");
+}
+
+
+DynamicBalancingExpansions::DynamicBalancingExpansions(const options::Options &opts) :
+	DynamicBalancing(opts),
+	base_removal_threshold(opts.get<int>("base_removal_threshold")),
+	expansions_counter(0) {}
+
+DynamicBalancingExpansions::~DynamicBalancingExpansions() {}
+
+auto DynamicBalancingExpansions::modifies_conjunctions_at_event(Event e) const -> bool {
+	return e == Event::STEP || DynamicBalancing::modifies_conjunctions_at_event(e);
+}
+
+auto DynamicBalancingExpansions::is_progress_within_constraints(const ConjunctionsHeuristic &heuristic) const -> bool {
+	return expansions_counter >= base_removal_threshold / std::pow(heuristic.get_counter_growth(), growth_exp);
+}
+
+void DynamicBalancingExpansions::reset_progress_evaluation() {
+	expansions_counter = 0;
+}
+
+auto DynamicBalancingExpansions::modify_conjunctions_step(ConjunctionsHeuristic &heuristic, const AbstractTask &task, EvaluationContext &eval_context) -> Result {
+	++expansions_counter;
+	return DynamicBalancing::modify_conjunctions_step(heuristic, task, eval_context);
+}
+
+void DynamicBalancingExpansions::dump_options() const {
+	DynamicBalancing::dump_options();
+	std::cout << "base removal threshold: " << base_removal_threshold << std::endl;
+}
+
+static auto _parse_dynamic_balancing_expansions(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	DynamicBalancing::add_options(parser);
+	parser.add_option<int>("base_removal_threshold", "remove a conjunction after not finding a new best state within X evaluations", "1000");
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<DynamicBalancingExpansions>(parser.parse());
+}
+
+
+DynamicBalancingTime::DynamicBalancingTime(const options::Options &opts) :
+	DynamicBalancing(opts),
+	base_removal_threshold(opts.get<double>("base_removal_threshold")),
+	improvement_timer() {}
+
+DynamicBalancingTime::~DynamicBalancingTime() {}
+
+auto DynamicBalancingTime::is_progress_within_constraints(const ConjunctionsHeuristic &heuristic) const -> bool {
+	return improvement_timer() >= base_removal_threshold / std::pow(heuristic.get_counter_growth(), growth_exp);
+}
+
+void DynamicBalancingTime::reset_progress_evaluation() {
+	improvement_timer.reset();
+}
+
+void DynamicBalancingTime::dump_options() const {
+	DynamicBalancing::dump_options();
+	std::cout << "base removal threshold: " << base_removal_threshold << std::endl;
+}
+
+static auto _parse_dynamic_balancing_time(options::OptionParser &parser) -> std::shared_ptr<ConjunctionGenerationStrategy> {
+	DynamicBalancing::add_options(parser);
+	parser.add_option<int>("base_removal_threshold", "remove a conjunction after not finding a new best state within X seconds", "10");
+	if (parser.help_mode() || parser.dry_run())
+		return nullptr;
+	return std::make_shared<DynamicBalancingExpansions>(parser.parse());
+}
+
+
+
 // strategy plugins
 
 static options::PluginShared<ConjunctionGenerationStrategy> _plugin_generate_initially("generate_initially", _parse_generate_initially);
@@ -654,7 +965,13 @@ static options::PluginShared<ConjunctionGenerationStrategy> _plugin_load_from_fi
 static options::PluginShared<ConjunctionGenerationStrategy> _plugin_read_count_from_file("read_count_from_file", _parse_read_count_from_file);
 static options::PluginShared<ConjunctionGenerationStrategy> _plugin_maintain_fixed_size("maintain_fixed_size", _parse_maintain_fixed_size);
 static options::PluginShared<ConjunctionGenerationStrategy> _plugin_maintain_fixed_size_stochastic("maintain_fixed_size_probabilistic", _parse_maintain_fixed_size_probabilistic);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_maintain_fixed_size_local_minima("maintain_fixed_size_local_minima", _parse_maintain_fixed_size_local_minima);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_add_periodically("add_periodically", _parse_add_periodically);
 static options::PluginShared<ConjunctionGenerationStrategy> _plugin_escape_local_minima("escape_local_minima", _parse_escape_local_minima);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_escape_local_minima_bounded("escape_local_minima_bounded", _parse_escape_local_minima_bounded);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_escape_local_minima_forget_all("escape_local_minima_forget_all", _parse_escape_local_minima_forget_all);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_dynamic_balancing_expansions("dynamic_balancing_expansions", _parse_dynamic_balancing_expansions);
+static options::PluginShared<ConjunctionGenerationStrategy> _plugin_dynamic_balancing_time("dynamic_balancing_time", _parse_dynamic_balancing_time);
 
 static options::PluginTypePlugin<ConjunctionGenerationStrategy> _type_plugin("Conjunction Generation Strategy",
 	"Strategies to generate conjunctions for h^CFF and related heuristics before and during search.");

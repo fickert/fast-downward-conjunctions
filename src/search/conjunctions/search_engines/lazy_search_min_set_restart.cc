@@ -5,8 +5,6 @@
 #include "../utils.h"
 
 namespace conjunctions {
-static const int DEFAULT_LAZY_BOOST = 1000;
-
 template<bool generalized, bool individual_min>
 LazySearchMinSetRestart<generalized, individual_min>::LazySearchMinSetRestart(const options::Options &opts) :
 	LazySearchMinSet<generalized, individual_min>(opts),

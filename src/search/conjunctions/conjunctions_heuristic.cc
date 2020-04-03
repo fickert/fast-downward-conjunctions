@@ -130,7 +130,7 @@ auto ConjunctionsHeuristic::compute_result(EvaluationContext &eval_context) -> E
 	if (strategy) {
 		auto conjunction_generation_event = initial_state ? ConjunctionGenerationStrategy::Event::INITIALIZATION : ConjunctionGenerationStrategy::Event::STEP;
 		initial_state = false;
-		auto conjunction_generation_result = strategy->modify_conjunctions(*this, conjunction_generation_event, *task, eval_context, nullptr);
+		auto conjunction_generation_result = strategy->modify_conjunctions(*this, conjunction_generation_event, *task, eval_context);
 		if (conjunction_generation_result == ConjunctionGenerationStrategy::Result::DEAD_END) {
 			if (cache_h_values) {
 				heuristic_cache[eval_context.get_state()].h = DEAD_END;
@@ -157,6 +157,8 @@ auto ConjunctionsHeuristic::compute_result(EvaluationContext &eval_context) -> E
 
 auto ConjunctionsHeuristic::compute_heuristic(const State &state) -> int {
 	if (!is_last_bsg_valid_for_state(state)) {
+		bsg_is_valid = false;
+		current_state_values = state.get_values();
 		current_preferred_operators.clear();
 		for (auto &conjunction_statistic : conjunction_statistics)
 			++conjunction_statistic.second.evaluations;
@@ -171,7 +173,6 @@ auto ConjunctionsHeuristic::compute_heuristic(const State &state) -> int {
 		auto relaxed_plan_extraction_start_time = std::chrono::steady_clock::now();
 		extract_relaxed_plan();
 		relaxed_plan_extraction_time += std::chrono::steady_clock::now() - relaxed_plan_extraction_start_time;
-		current_state_values = state.get_values();
 		bsg_is_valid = true;
 
 		for (auto &conjunction_statistic : conjunction_statistics)
@@ -196,6 +197,12 @@ auto ConjunctionsHeuristic::compute_heuristic(const State &state) -> int {
 	default:
 		return current_bsg.get_plan_length();
 	}
+}
+
+auto ConjunctionsHeuristic::get_cost(const FactPair &fact) const -> int {
+	assert(!conjunctions_containing_fact[fact.var][fact.value].empty());
+	assert(conjunctions_containing_fact[fact.var][fact.value].front()->facts.size() == 1);
+	return conjunctions_containing_fact[fact.var][fact.value].front()->cost;
 }
 
 auto ConjunctionsHeuristic::is_last_bsg_valid_for_state(const State &state) const -> bool {
@@ -405,7 +412,7 @@ void ConjunctionsHeuristic::initialize_conjunctions_containing_fact() {
 
 // best supporter functions
 
-auto ConjunctionsHeuristic::compute_best_supporter_function(const State &state) -> cost_t {
+auto ConjunctionsHeuristic::compute_best_supporter_function(const State &state) -> int {
 	reset_heuristic();
 	switch (best_supporter_function) {
 	case BestSupporterFunction::HCADD:
@@ -438,14 +445,14 @@ void ConjunctionsHeuristic::print_overflow_warning() {
 	}
 }
 
-auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> cost_t {
-	using QueueEntry = std::pair<cost_t, Conjunction *>;
+auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> int {
+	using QueueEntry = std::pair<int, Conjunction *>;
 	auto compare_cost = [](const QueueEntry &left, const QueueEntry &right) {
 		return left.first > right.first;
 	};
 	auto queue = std::priority_queue<QueueEntry, std::vector<QueueEntry>, decltype(compare_cost)>(compare_cost);
 
-	auto enqueue_if_necessary = [&queue](Conjunction *conjunction, cost_t cost, const Action *supporter) {
+	auto enqueue_if_necessary = [&queue](Conjunction *conjunction, int cost, const Action *supporter) {
 		if (conjunction->cost == -1 || conjunction->cost > cost) {
 			conjunction->cost = cost;
 			conjunction->supporters.clear();
@@ -468,13 +475,13 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> cost_t {
 		}
 	}
 	
-	auto h = static_cast<cost_t>(0);
+	auto h = 0;
 
 	while (!queue.empty()) {
 		auto top_pair = queue.top();
 		queue.pop();
 		auto conjunction = top_pair.second;
-		auto cost = top_pair.first;
+		int cost = top_pair.first;
 
 		assert(conjunction->cost <= cost);
 
@@ -498,7 +505,7 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> cost_t {
 			counter_group.cost += cost;
 
 			if (--counter_group.value == 0) {
-				assert(counter_group.cost == std::accumulate(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions), static_cast<cost_t>(0), [](auto sum, const auto regression_conjunction) { return sum + regression_conjunction->cost; }));
+				assert(counter_group.cost == std::accumulate(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions), 0, [](auto sum, const auto regression_conjunction) { return sum + regression_conjunction->cost; }));
 				for (const auto &member : counter_group.group)
 					enqueue_if_necessary(member.second, counter_group.cost + member.first->cost, member.first);
 			}
@@ -509,16 +516,16 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> cost_t {
 	return DEAD_END;
 }
 
-auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> cost_t {
+auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> int {
 	// map to direclty access the conjunction vector for each cost
-	std::unordered_map<cost_t, std::vector<Conjunction *> *> priority_map;
+	std::unordered_map<int, std::vector<Conjunction *> *> priority_map;
 
 	// "priority queue"
-	using QueueElement = std::pair<cost_t, std::vector<Conjunction *> *>;
+	using QueueElement = std::pair<int, std::vector<Conjunction *> *>;
 	std::vector<QueueElement> queue;
 	queue.reserve(VECTOR_RESERVE_SIZE);
 
-	auto enqueue_if_necessary = [&priority_map, &queue](Conjunction *conjunction, cost_t cost, const Action *supporter, int i) {
+	auto enqueue_if_necessary = [&priority_map, &queue](Conjunction *conjunction, int cost, const Action *supporter, int i) {
 		if (conjunction->cost == -1 || conjunction->cost > cost) {
 			conjunction->cost = cost;
 			conjunction->supporters.clear();
@@ -553,11 +560,11 @@ auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> cos
 		}
 	}
 
-	auto h = static_cast<cost_t>(0);
+	int h = 0;
 
 	for (auto i = 0u; i < queue.size(); ++i) {
 		auto top_pair = queue[i];
-		auto cost = top_pair.first;
+		int cost = top_pair.first;
 
 		for (auto conjunction : *top_pair.second) {
 
@@ -717,7 +724,7 @@ auto ConjunctionsHeuristic::compute_hcmax(const State &state) -> int {
 void ConjunctionsHeuristic::extract_relaxed_plan() {
 	current_bsg.clear();
 
-	auto open_conjunctions = std::map<cost_t, std::vector<Conjunction *>>();
+	auto open_conjunctions = std::map<int, std::vector<Conjunction *>>();
 	if (tie_breaking == TieBreaking::CONFLICTS)
 		current_preconditions.clear();
 
@@ -782,13 +789,13 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 						auto only_new_facts = FactSet();
 						std::set_difference(std::begin(new_precondition_facts), std::end(new_precondition_facts), std::begin(precondition_facts), std::end(precondition_facts), std::back_inserter(only_new_facts));
 
-	#ifndef NDEBUG
+#ifndef NDEBUG
 						auto is_new_fact = [&only_new_facts](const auto &f) {
 							return std::binary_search(std::begin(only_new_facts), std::end(only_new_facts), f);
 						};
 						for (auto precondition_conjunction : precondition_conjunctions)
 							assert(std::none_of(std::begin(precondition_conjunction->facts), std::end(precondition_conjunction->facts), is_new_fact));
-	#endif
+#endif
 
 						// build new set of precondition conjunctions
 						auto new_precondition_conjunctions = precondition_conjunctions;
@@ -914,7 +921,7 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 	}
 }
 
-auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<cost_t, std::vector<Conjunction *>> &open_conjunctions) -> std::pair<Conjunction *, const Action *> {
+auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<int, std::vector<Conjunction *>> &open_conjunctions) -> std::pair<Conjunction *, const Action *> {
 	assert(!open_conjunctions.empty());
 	auto max_it = open_conjunctions.rbegin();
 	auto &candidate_conjunctions = max_it->second;
@@ -1081,7 +1088,7 @@ void ConjunctionsHeuristic::verify_relaxed_plan(const BestSupporterGraph &bsg) c
 		assert(std::adjacent_find(reached.begin(), reached.end()) == reached.end() && "reached should be unique");
 	}
 
-#ifndef NDEBUG // avoid unused variable compiler warning
+#ifndef NDEBUG
 	// verify that all goal conjunctions are reached
 	for (const auto goal_conjunction : get_non_dominated_conjunctions(end_action->pre, conjunctions_containing_fact))
 		assert(std::binary_search(reached.begin(), reached.end(), goal_conjunction) && "relaxed plan verification failed: goal conjunction not reached");
@@ -1378,21 +1385,21 @@ void ConjunctionsHeuristic::unsubscribe(novelty::NoveltyHeuristic &novelty_heuri
 
 // statistics for conjunctions that could be added
 
-auto ConjunctionsHeuristic::get_cost_in_current_state(const FactSet &facts) const -> cost_t {
+auto ConjunctionsHeuristic::get_cost_in_current_state(const FactSet &facts) const -> int {
 	if (std::all_of(std::begin(facts), std::end(facts), [this](const auto &fact) { return current_state_values[fact.var] == fact.value; }))
 		return 0;
 	auto compare = [](const auto lhs, const auto rhs) {
 		return lhs != -1 && (rhs == -1 || lhs < rhs);
 	};
-	auto min_cost = static_cast<cost_t >(-1);
+	auto min_cost = -1;
 	auto potentially_supporting_actions = get_potentially_supporting_actions(facts);
 	for (const auto *action : potentially_supporting_actions) {
 		if (is_regressable_and_mutex_free(*action, facts, *task)) {
 			auto regression_conjunctions = get_non_dominated_conjunctions(compute_regression(*action, facts), conjunctions_containing_fact);
 			auto cost = best_supporter_function == BestSupporterFunction::HCADD || best_supporter_function == BestSupporterFunction::HCADD_ALTERNATIVE ? 
-				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), static_cast<cost_t>(0),
+				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), 0,
 					[compare](auto cost, auto regression_conjunction) { return std::max({cost, regression_conjunction->cost, regression_conjunction->cost + cost}, compare); }) :
-				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), static_cast<cost_t>(0),
+				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), 0,
 					[compare](auto cost, auto regression_conjunction) { return std::max(cost, regression_conjunction->cost, compare); });
 			min_cost = std::min(min_cost, cost, compare);
 		}
@@ -1400,14 +1407,13 @@ auto ConjunctionsHeuristic::get_cost_in_current_state(const FactSet &facts) cons
 	return min_cost;
 }
 
-auto ConjunctionsHeuristic::get_cost_increase_in_current_state(const FactSet &facts) const -> cost_t {
+auto ConjunctionsHeuristic::get_cost_increase_in_current_state(const FactSet &facts) const -> int {
 	assert(facts.size() > 1);
 	auto dominated = get_dominated_conjunctions_slow(facts);
-	auto max_cost = static_cast<cost_t>(0);
+	auto max_cost = 0;
 	for (const auto conjunction : dominated) {
 		assert(max_cost >= 0);
 		if (conjunction->cost == -1) {
-			assert(false); // TODO: not sure about this
 			assert(get_cost_in_current_state(facts) == -1);
 			return 0;
 		}

@@ -23,7 +23,7 @@ OnlineLearningSearchEngine::OnlineLearningSearchEngine(const options::Options &o
 auto OnlineLearningSearchEngine::generate_conjunctions(ConjunctionsHeuristic &heuristic, ConjunctionGenerationStrategy::Event event, EvaluationContext &eval_context, bool check_solved, int bound) -> ConjunctionGenerationStrategy::Result {
 	auto begin = learning_timer();
 	learning_timer.resume();
-	auto result = conjunctions_strategy->modify_conjunctions(heuristic, event, state_registry.get_task(), eval_context, &state_registry);
+	auto result = conjunctions_strategy->modify_conjunctions(heuristic, event, state_registry.get_task(), eval_context);
 	if (check_solved && result == ConjunctionGenerationStrategy::Result::SOLVED && (bound == -1 || heuristic.get_last_bsg().get_real_cost() <= bound)) {
 		std::cout << "Solution found!" << std::endl;
 		set_solution(heuristic.get_last_relaxed_plan(), eval_context.get_state());
@@ -34,14 +34,6 @@ auto OnlineLearningSearchEngine::generate_conjunctions(ConjunctionsHeuristic &he
 }
 
 void OnlineLearningSearchEngine::set_solution(const Plan &partial_plan, const GlobalState &state) {
-#ifndef NDEBUG
-	auto current_state = state;
-	for (auto *op : partial_plan) {
-		assert(op->is_applicable(current_state));
-		current_state = state_registry.get_successor_state(current_state, *op);
-	}
-	assert(test_goal(current_state));
-#endif
 	if (state.get_id() == state_registry.get_initial_state().get_id()) {
 		set_plan(partial_plan);
 	} else {

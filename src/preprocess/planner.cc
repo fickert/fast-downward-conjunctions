@@ -27,7 +27,6 @@ int main(int argc, const char **) {
     vector<MutexGroup> mutexes;
     vector<Operator> operators;
     vector<Axiom> axioms;
-    vector<DomainTransitionGraph> transition_graphs;
 
     if (argc != 1) {
         cout << "*** do not perform relevance analysis ***" << endl;
@@ -42,36 +41,12 @@ int main(int argc, const char **) {
     cout << "Building causal graph..." << endl;
     CausalGraph causal_graph(variables, operators, axioms, goals);
     const vector<Variable *> &ordering = causal_graph.get_variable_ordering();
-    bool cg_acyclic = causal_graph.is_acyclic();
 
     // Remove unnecessary effects from operators and axioms, then remove
     // operators and axioms without effects.
     strip_mutexes(mutexes);
     strip_operators(operators);
     strip_axioms(axioms);
-
-    cout << "Building domain transition graphs..." << endl;
-    build_DTGs(ordering, operators, axioms, transition_graphs);
-    //dump_DTGs(ordering, transition_graphs);
-    bool solveable_in_poly_time = false;
-    if (cg_acyclic)
-        solveable_in_poly_time = are_DTGs_strongly_connected(transition_graphs);
-    /*
-      TODO: The above test doesn't seem to be quite ok because it
-      ignores axioms and it ignores non-unary operators. (Note that the
-      causal graph computed here does *not* contain arcs between
-      effects, only arcs from preconditions to effects.)
-
-      So solveable_in_poly_time [sic] should also be set to false if
-      there are any derived variables or non-unary operators.
-     */
-
-    //TODO: genauer machen? (highest level var muss nicht scc sein...gemacht)
-    //nur Werte, die wichtig sind fuer drunterliegende vars muessen in scc sein
-    cout << "solveable in poly time " << solveable_in_poly_time << endl;
-    cout << "Building successor generator..." << endl;
-    SuccessorGenerator successor_generator(ordering, operators);
-    //successor_generator.dump();
 
     // Output some task statistics
     int facts = 0;
@@ -99,9 +74,8 @@ int main(int argc, const char **) {
     cout << "Preprocessor task size: " << task_size << endl;
 
     cout << "Writing output..." << endl;
-    generate_cpp_input(solveable_in_poly_time, ordering, metric,
+    generate_cpp_input(ordering, metric,
                        mutexes, initial_state, goals,
-                       operators, axioms, successor_generator,
-                       transition_graphs, causal_graph);
+                       operators, axioms);
     cout << "done" << endl;
 }

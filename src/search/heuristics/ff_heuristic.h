@@ -22,6 +22,9 @@ class FFHeuristic : public additive_heuristic::AdditiveHeuristic {
     // as a bit vector.
     typedef std::vector<bool> RelaxedPlan;
     RelaxedPlan relaxed_plan;
+
+	std::vector<std::pair<FactPair, int>> subgoals_and_costs;
+
     void mark_preferred_operators_and_relaxed_plan(
         const State &state, Proposition *goal);
 protected:
@@ -29,6 +32,10 @@ protected:
 public:
     FFHeuristic(const options::Options &options);
     ~FFHeuristic();
+
+	auto get_last_subgoals_and_costs() const -> std::vector<std::pair<FactPair, int>> override;
+	auto get_last_relaxed_plan() const -> std::vector<const GlobalOperator *> override;
+
 };
 }
 

@@ -520,12 +520,29 @@ fast_downward_plugin(
 )
 
 fast_downward_plugin(
+    NAME SUBGOAL_COUNT
+    HELP "Subgoal count heuristic and novelty-bounded lookahead search"
+    SOURCES
+        heuristics/subgoal_count_heuristic.cc
+        search_engines/gbfs_relaxed_subgoals_lookahead.cc
+)
+
+fast_downward_plugin(
+    NAME yahsp_lookahead
+    HELP "Lazy search with YAHSP-style lookahead"
+    SOURCES
+        search_engines/gbfs_yahsp_lookahead.cc
+)
+
+fast_downward_plugin(
     NAME CONJUNCTIONS
     HELP "Plugin containing the code for partial delete relaxation heuristics with explicit conjunctions"
     SOURCES
         conjunctions/conflict_extraction.cc
         conjunctions/conjunctions.h
         conjunctions/conjunctions_heuristic.cc
+        conjunctions/conjunctions_subgoal_count_heuristic.cc
+        conjunctions/conjunctions_subset_generator.cc
         conjunctions/generation_strategy.cc
         conjunctions/novelty_heuristic.cc
         conjunctions/novelty_linker.cc
@@ -534,9 +551,46 @@ fast_downward_plugin(
         conjunctions/search_engines/enforced_hill_climbing_novelty_search.cc
         conjunctions/search_engines/ipc18_iterated_search.cc
         conjunctions/search_engines/lazy_search.cc
+        conjunctions/search_engines/lazy_search_min_set.cc
+        conjunctions/search_engines/lazy_search_min_set_continue.cc
+        conjunctions/search_engines/lazy_search_min_set_restart.cc
+        conjunctions/search_engines/lazy_search_relaxed_subgoals_lookahead.cc
+        conjunctions/search_engines/lazy_search_simple.cc
         conjunctions/search_engines/online_learning_search_engine.cc
+        conjunctions/search_engines/lazy_search_yahsp_lookahead.cc
+        conjunctions/search_engines/yahsp_lookahead.cc
     DEPENDS BOOST
 )
+
+fast_downward_plugin(
+    NAME GREY
+    HELP "Plugin containing the code for grey planning heuristics"
+    SOURCES
+        grey/DAG_new_agenda.cc
+        grey/dtg_operators.cc
+        grey/grey_heuristic.cc
+        grey/grey_initial_state_search.cc
+        grey/grey_operator.cc
+        grey/variable_ordering.cc
+        grey/graph_algorithms/scc.cc
+        grey/graph_algorithms/topological_sort.cc
+        grey/graph_algorithms/transitive_closure.cc
+        grey/learning/PDB_state_space_sample.cc
+        grey/learning/probe_state_space_sample.cc
+        grey/learning/state_space_sample.cc
+    DEPENDS ADDITIVE_HEURISTIC
+)
+
+fast_downward_plugin(
+    NAME red_black
+    HELP "Plugin containing the code for red-black planning heuristics"
+    SOURCES
+        red_black/dtg_operators.cc
+        red_black/red_black_DAG_fact_following_heuristic.cc
+        red_black/red_black_operator.cc
+    DEPENDS ADDITIVE_HEURISTIC GREY
+)
+
 
 fast_downward_add_plugin_sources(PLANNER_SOURCES)
 

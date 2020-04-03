@@ -71,10 +71,10 @@ void AdditiveHeuristic::setup_exploration_queue_state(const GlobalState &state) 
 void AdditiveHeuristic::relaxed_exploration() {
     int unsolved_goals = goal_propositions.size();
     while (!queue.empty()) {
-        pair<long long, Proposition *> top_pair = queue.pop();
-        long long distance = top_pair.first;
+        pair<int, Proposition *> top_pair = queue.pop();
+        int distance = top_pair.first;
         Proposition *prop = top_pair.second;
-        long long prop_cost = prop->cost;
+        int prop_cost = prop->cost;
         assert(prop_cost >= 0);
         assert(prop_cost <= distance);
         if (prop_cost < distance)
@@ -118,14 +118,14 @@ void AdditiveHeuristic::mark_preferred_operators(
     }
 }
 
-long long AdditiveHeuristic::compute_add_and_ff(const State &state) {
+int AdditiveHeuristic::compute_add_and_ff(const State &state) {
     setup_exploration_queue();
     setup_exploration_queue_state(state);
     relaxed_exploration();
 
-    long long total_cost = 0;
+    int total_cost = 0;
     for (size_t i = 0; i < goal_propositions.size(); ++i) {
-        long long prop_cost = goal_propositions[i]->cost;
+        int prop_cost = goal_propositions[i]->cost;
         if (prop_cost == -1)
             return DEAD_END;
         increase_cost(total_cost, prop_cost);
@@ -133,14 +133,14 @@ long long AdditiveHeuristic::compute_add_and_ff(const State &state) {
     return total_cost;
 }
 
-long long AdditiveHeuristic::compute_add_and_ff(const GlobalState &state) {
+int AdditiveHeuristic::compute_add_and_ff(const GlobalState &state) {
     setup_exploration_queue();
     setup_exploration_queue_state(state);
     relaxed_exploration();
 
-    long long total_cost = 0;
+    int total_cost = 0;
     for (size_t i = 0; i < goal_propositions.size(); ++i) {
-        long long prop_cost = goal_propositions[i]->cost;
+        int prop_cost = goal_propositions[i]->cost;
         if (prop_cost == -1)
             return DEAD_END;
         increase_cost(total_cost, prop_cost);
@@ -149,12 +149,11 @@ long long AdditiveHeuristic::compute_add_and_ff(const GlobalState &state) {
 }
 
 int AdditiveHeuristic::compute_heuristic(const State &state) {
-    long long h = compute_add_and_ff(state);
+    int h = compute_add_and_ff(state);
     if (h != DEAD_END) {
         for (size_t i = 0; i < goal_propositions.size(); ++i)
             mark_preferred_operators(state, goal_propositions[i]);
     }
-    h = std::min(h, static_cast<long long>(std::numeric_limits<int>::max()));
     return h;
 }
 

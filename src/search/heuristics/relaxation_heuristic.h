@@ -20,8 +20,8 @@ struct UnaryOperator {
     int base_cost;
 
     int unsatisfied_preconditions;
-    long long cost; // Used for h^max cost or h^add cost;
-                    // includes operator cost (base_cost)
+    int cost; // Used for h^max cost or h^add cost;
+              // includes operator cost (base_cost)
     UnaryOperator(const std::vector<Proposition *> &pre, Proposition *eff,
                   int operator_no_, int base)
         : operator_no(operator_no_), precondition(pre), effect(eff),
@@ -33,11 +33,13 @@ struct Proposition {
     int id;
     std::vector<UnaryOperator *> precondition_of;
 
-    long long cost; // Used for h^max cost or h^add cost
+    int cost; // Used for h^max cost or h^add cost
     UnaryOperator *reached_by;
     bool marked; // used when computing preferred operators for h^add and h^FF
 
-    Proposition(int id_) {
+	const FactPair fact;
+
+    Proposition(int id_, FactPair fact) : fact(fact) {
         id = id_;
         is_goal = false;
         cost = -1;
@@ -60,6 +62,8 @@ public:
     RelaxationHeuristic(const options::Options &options);
     virtual ~RelaxationHeuristic();
     virtual bool dead_ends_are_reliable() const;
+
+    auto get_cost(const FactPair &) const -> int override;
 };
 }
 

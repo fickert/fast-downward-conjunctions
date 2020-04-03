@@ -236,8 +236,6 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 		if (current_real_g + heuristic->get_last_bsg().get_real_cost() <= bound)
 			return SOLVED;
 		break;
-	case ConjunctionGenerationStrategy::Result::FAILED:
-		return FAILED;
 	default:
 		std::cerr << "Unknown learning result." << std::endl;
 		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
@@ -250,6 +248,7 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 	}
 
 	auto dead_end_unsafe = false;
+	auto num_expansions_this_ehc_phase = 0;
 	while (!open_list->empty()) {
 		if (is_time_expired())
 			return TIMEOUT;
@@ -296,6 +295,7 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 			if (novelty_heuristic->is_basic() && !is_novel())
 				continue;
 
+			++num_expansions_this_ehc_phase;
 			auto h = evaluate_if_neccessary(eval_context, parent_state, *last_op);
 			if (h == EvaluationResult::INFTY) {
 				node.mark_as_dead_end();
@@ -371,6 +371,7 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 	if (!current_unsafe_dead_ends.empty() && !bfs_cutoff)
 		return escape_potential_dead_end();
 	current_unsafe_dead_ends.clear();
+	ehcc_statistics.num_expansions_in_ehc_phases_with_refinement += num_expansions_this_ehc_phase;
 	return escape_local_minimum();
 }
 
@@ -455,9 +456,6 @@ auto EnforcedHillClimbingNoveltySearch::escape_local_minimum() -> SearchStatus {
 
 		current_eval_context = EvaluationContext(current_eval_context.get_state(), &statistics);
 		auto learning_result = generate_conjunctions(*heuristic, ConjunctionGenerationStrategy::Event::LOCAL_MINIMUM, current_eval_context, true, bound - current_real_g);
-		if (learning_result == ConjunctionGenerationStrategy::Result::FAILED)
-			return FAILED;
-
 		if (learning_result == ConjunctionGenerationStrategy::Result::SOLVED && current_real_g + heuristic->get_last_bsg().get_real_cost() <= bound)
 			return SOLVED;
 
@@ -620,6 +618,7 @@ auto EnforcedHillClimbingNoveltySearch::restart_in_parent() -> SearchStatus {
 void EnforcedHillClimbingNoveltySearch::print_ehcc_statistics() const {
 	std::cout << "EHC Phases: " << ehcc_statistics.num_ehc_phases << std::endl;
 	std::cout << "Average expansions per EHC phase: " << ehcc_statistics.get_avg_expansions_per_ehc_phase(statistics.get_expanded()) << std::endl;
+	std::cout << "Average expansions per EHC phase with refinement: " << ehcc_statistics.get_avg_expansions_per_ehc_phase_with_refinement(online_learning_statistics.num_learning_calls) << std::endl;
 	std::cout << "Dead ends during learning: " << ehcc_statistics.num_dead_ends_during_learning << std::endl;
 	std::cout << "Dead ends during learning or backjumping: " << ehcc_statistics.num_dead_ends << std::endl;
 	std::cout << "No better state after learning: " << ehcc_statistics.num_no_better_state_after_learning << std::endl;

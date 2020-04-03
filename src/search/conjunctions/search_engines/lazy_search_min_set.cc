@@ -1,7 +1,7 @@
 #include "lazy_search_min_set.h"
 
 #include "../../open_lists/open_list_factory.h"
-#include "../../successor_generator.h"
+#include "../../task_utils/successor_generator.h"
 #include "../utils.h"
 
 namespace conjunctions {
@@ -33,7 +33,8 @@ LazySearchMinSet<generalized, individual_min>::LazySearchMinSet(const options::O
 	detail::LazySearchMinSetBase<generalized, individual_min>(opts),
 	open_list(opts.get<std::shared_ptr<OpenListFactory>>("open")->create_edge_open_list()),
 	randomize_successors(opts.get<bool>("randomize_successors")),
-	preferred_successors_first(opts.get<bool>("preferred_successors_first")),
+	urng(opts.get<int>("seed") == -1 ? std::random_device()() : opts.get<int>("seed")),
+	preferred_usage(PreferredUsage(opts.get_enum("preferred_usage"))),
 	heuristics(),
 	preferred_operator_heuristics(),
 	conjunctions_heuristics(),
@@ -109,29 +110,37 @@ void LazySearchMinSet<generalized, individual_min>::get_successor_operators(std:
 	}
 
 	if (randomize_successors) {
-		g_rng()->shuffle(all_operators);
+		std::shuffle(std::begin(all_operators), std::end(all_operators), urng);
 		// Note that preferred_operators can contain duplicates that are
 		// only filtered out later, which gives operators "preferred
 		// multiple times" a higher chance to be ordered early.
-		g_rng()->shuffle(preferred_operators);
+		std::shuffle(std::begin(preferred_operators), std::end(preferred_operators), urng);
 	}
 
-	if (preferred_successors_first) {
+	switch (preferred_usage) {
+	case PreferredUsage::ALTERNATING:
+		for (const auto op : preferred_operators)
+			if (!op->is_marked())
+				op->mark();
+		ops.swap(all_operators);
+		break;
+	case PreferredUsage::PRUNE_BY_PREFERRED:
+		for (const auto op : preferred_operators)
+			if (!op->is_marked())
+				op->mark();
+		ops.swap(preferred_operators);
+		break;
+	case PreferredUsage::RANK_PREFERRED_FIRST:
 		for (const auto op : preferred_operators) {
 			if (!op->is_marked()) {
 				ops.push_back(op);
 				op->mark();
 			}
 		}
-
 		for (const auto op : all_operators)
 			if (!op->is_marked())
 				ops.push_back(op);
-	} else {
-		for (const auto op : preferred_operators)
-			if (!op->is_marked())
-				op->mark();
-		ops.swap(all_operators);
+		break;
 	}
 }
 
@@ -359,10 +368,24 @@ auto LazySearchMinSet<generalized, individual_min>::step() -> SearchStatus {
 				return SOLVED;
 			}
 
+			// generate conjunctions according to the selected strategy for this step
+			for (auto conjunctions_heuristic : conjunctions_heuristics) {
+				auto result = generate_conjunctions(*conjunctions_heuristic, ConjunctionGenerationStrategy::Event::STEP, current_eval_context);
+				if (result == ConjunctionGenerationStrategy::Result::SOLVED)
+					return SOLVED;
+				if (result == ConjunctionGenerationStrategy::Result::DEAD_END) {
+					node.mark_as_dead_end();
+					statistics.inc_dead_ends();
+					remove_current_state_from_open_successors(node);
+					return fetch_next_state();
+				}
+			}
+
 			h_cache[current_state] = current_eval_context.get_heuristic_value(conjunctions_heuristics.front());
 
 			// update min states
-			update_min_set();
+			auto improved = update_min_set();
+			assert(!min_states.empty());
 
 			node.close();
 			if (check_goal_and_set_plan(current_state))
@@ -373,6 +396,20 @@ auto LazySearchMinSet<generalized, individual_min>::step() -> SearchStatus {
 			}
 			generate_successors();
 			statistics.inc_expanded();
+			if (improved) {
+				// generate conjunctions according to the selected strategy after heuristic improvement
+				for (auto conjunctions_heuristic : conjunctions_heuristics) {
+					auto result = generate_conjunctions(*conjunctions_heuristic, ConjunctionGenerationStrategy::Event::NEW_BEST_H, current_eval_context);
+					if (result == ConjunctionGenerationStrategy::Result::SOLVED)
+						return SOLVED;
+					if (result == ConjunctionGenerationStrategy::Result::DEAD_END) {
+						node.mark_as_dead_end();
+						statistics.inc_dead_ends();
+						remove_current_state_from_open_successors(node);
+						return fetch_next_state();
+					}
+				}
+			}
 		} else {
 			node.mark_as_dead_end();
 			statistics.inc_dead_ends();
@@ -385,6 +422,7 @@ auto LazySearchMinSet<generalized, individual_min>::step() -> SearchStatus {
 template<bool generalized, bool individual_min>
 auto LazySearchMinSet<generalized, individual_min>::fetch_next_state() -> SearchStatus {
 	if (open_list->empty()) {
+		// TODO: when using PreferredUsage::PRUNE_BY_PREFERRED, we should restart (or similar) instead of failing
 		std::cout << "Completely explored state space -- no solution!" << std::endl;
 		return FAILED;
 	}
@@ -415,52 +453,64 @@ auto LazySearchMinSet<generalized, individual_min>::fetch_next_state() -> Search
 }
 
 template<>
-void LazySearchMinSet<false, false>::update_min_set() {
+auto LazySearchMinSet<false, false>::update_min_set() -> bool {
+	auto improved = false;
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) < min_h) {
 		min_states.clear();
 		min_h = current_eval_context.get_heuristic_value(conjunctions_heuristics.front());
+		improved = true;
 	}
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) == min_h)
 		min_states.push_back(current_state.get_id());
+	return improved;
 }
 
 template<>
-void LazySearchMinSet<false, true>::update_min_set() {
+auto LazySearchMinSet<false, true>::update_min_set() -> bool {
+	auto improved = false;
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) < min_h) {
 		min_states.clear();
 		min_h = current_eval_context.get_heuristic_value(conjunctions_heuristics.front());
 		open_successors.clear();
+		improved = true;
 	}
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) == min_h)
 		min_states.push_back(current_state.get_id());
+	return improved;
 }
 
 template<>
-void LazySearchMinSet<true, false>::update_min_set() {
+auto LazySearchMinSet<true, false>::update_min_set() -> bool {
+	auto improved = false;
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) < min_h) {
 		min_states.clear();
 		min_h = current_eval_context.get_heuristic_value(conjunctions_heuristics.front());
 		open_successors.clear();
 		all_successors.clear();
+		improved = true;
 	}
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) == min_h) {
 		min_states.push_back(current_state.get_id());
 		all_successors[current_state.get_id()] = 0;
 	}
+	return improved;
 }
 
 template<>
-void LazySearchMinSet<true, true>::update_min_set() {
+auto LazySearchMinSet<true, true>::update_min_set() -> bool {
+	auto improved = false;
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) < min_h) {
 		min_states.clear();
 		min_h = current_eval_context.get_heuristic_value(conjunctions_heuristics.front());
 		open_successors.clear();
 		all_successors.clear();
+		improved = true;
 	}
 	if (current_eval_context.get_heuristic_value(conjunctions_heuristics.front()) == min_h) {
 		min_states.push_back(current_state.get_id());
 		all_successors[current_state.get_id()][current_state.get_id()] = 0;
 	}
+	return improved;
 }
 
 template<>
@@ -632,15 +682,13 @@ static void _add_succ_order_options(options::OptionParser &parser) {
 	parser.add_option<bool>(
 		"randomize_successors",
 		"randomize the order in which successors are generated",
-		"false");
-	parser.add_option<bool>(
-		"preferred_successors_first",
-		"consider preferred operators first",
-		"false");
+		"true");
+	parser.add_option<int>("seed", "Random seed (for successor randomization). If this is set to -1, an arbitrary seed is used.", "-1");
+	parser.add_enum_option("preferred_usage", {"ALTERNATING", "PRUNE_BY_PREFERRED", "RANK_PREFERRED_FIRST"}, "preferred operator usage", "ALTERNATING");
 	parser.document_note(
 		"Successor ordering",
 		"When using randomize_successors=true and "
-		"preferred_successors_first=true, randomization happens before "
+		"preferred_usage=RANK_PREFERRED_FIRST, randomization happens before "
 		"preferred operators are moved to the front.");
 }
 

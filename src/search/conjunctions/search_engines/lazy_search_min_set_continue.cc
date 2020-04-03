@@ -4,8 +4,6 @@
 #include "../../options/plugin.h"
 
 namespace conjunctions {
-static const int DEFAULT_LAZY_BOOST = 1000;
-
 template<bool generalized, bool individual_min>
 LazySearchMinSetContinue<generalized, individual_min>::LazySearchMinSetContinue(const options::Options &opts) :
 	LazySearchMinSet<generalized, individual_min>(opts) {}

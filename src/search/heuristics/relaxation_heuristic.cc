@@ -24,7 +24,7 @@ RelaxationHeuristic::RelaxationHeuristic(const options::Options &opts)
     VariablesProxy variables = task_proxy.get_variables();
     propositions.resize(variables.size());
     for (FactProxy fact : variables.get_facts()) {
-        propositions[fact.get_variable().get_id()].push_back(Proposition(prop_id++));
+        propositions[fact.get_variable().get_id()].push_back(Proposition(prop_id++, fact.get_pair()));
     }
 
     // Build goal propositions.
@@ -57,6 +57,10 @@ RelaxationHeuristic::~RelaxationHeuristic() {
 
 bool RelaxationHeuristic::dead_ends_are_reliable() const {
     return !has_axioms();
+}
+
+auto RelaxationHeuristic::get_cost(const FactPair &fact) const -> int {
+    return propositions[fact.var][fact.value].cost;
 }
 
 Proposition *RelaxationHeuristic::get_proposition(const FactProxy &fact) {

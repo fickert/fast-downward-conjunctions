@@ -90,6 +90,12 @@ public:
 
     ~EvaluationContext() = default;
 
+	EvaluationContext(const EvaluationContext &) = default;
+	EvaluationContext(EvaluationContext &&) = default;
+
+	auto operator=(const EvaluationContext &) -> EvaluationContext & = default;
+	auto operator=(EvaluationContext &&) -> EvaluationContext & = default;
+
     const EvaluationResult &get_result(ScalarEvaluator *heur);
     const HeuristicCache &get_cache() const;
     const GlobalState &get_state() const;

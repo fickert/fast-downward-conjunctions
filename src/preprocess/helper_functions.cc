@@ -157,17 +157,13 @@ void dump_DTGs(const vector<Variable *> &ordering,
     }
 }
 
-void generate_cpp_input(bool /*solvable_in_poly_time*/,
-                        const vector<Variable *> &ordered_vars,
+void generate_cpp_input(const vector<Variable *> &ordered_vars,
                         const bool &metric,
                         const vector<MutexGroup> &mutexes,
                         const State &initial_state,
                         const vector<pair<Variable *, int>> &goals,
                         const vector<Operator> &operators,
-                        const vector<Axiom> &axioms,
-                        const SuccessorGenerator &sg,
-                        const vector<DomainTransitionGraph> transition_graphs,
-                        const CausalGraph &cg) {
+                        const vector<Axiom> &axioms) {
     /* NOTE: solvable_in_poly_time flag is no longer included in output,
        since the planner doesn't handle it specially any more anyway. */
 
@@ -216,20 +212,6 @@ void generate_cpp_input(bool /*solvable_in_poly_time*/,
     outfile << axioms.size() << endl;
     for (const Axiom &axiom : axioms)
         axiom.generate_cpp_input(outfile);
-
-    outfile << "begin_SG" << endl;
-    sg.generate_cpp_input(outfile);
-    outfile << "end_SG" << endl;
-
-    for (const auto &dtg : transition_graphs) {
-        outfile << "begin_DTG" << endl;
-        dtg.generate_cpp_input(outfile);
-        outfile << "end_DTG" << endl;
-    }
-
-    outfile << "begin_CG" << endl;
-    cg.generate_cpp_input(outfile, ordered_vars);
-    outfile << "end_CG" << endl;
 
     outfile.close();
 }

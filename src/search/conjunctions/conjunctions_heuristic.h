@@ -7,7 +7,7 @@
 #include <functional>
 #include <fstream>
 
-#include <experimental/filesystem>
+#include <filesystem>
 
 #include "../heuristic.h"
 #include "../utils/rng.h"
@@ -50,6 +50,8 @@ public:
 	auto compute_heuristic(const GlobalState &global_state) -> int override {
 		return compute_heuristic(convert_global_state(global_state));
 	}
+
+	auto get_cost(const FactPair &fact) const -> int override;
 
 	void set_strategy(std::shared_ptr<ConjunctionGenerationStrategy> conjunction_generation_strategy) { strategy = conjunction_generation_strategy; }
 
@@ -104,8 +106,12 @@ public:
 		return conjunctions;
 	}
 
-	auto get_cost_in_current_state(const FactSet &) const -> cost_t;
-	auto get_cost_increase_in_current_state(const FactSet &) const -> cost_t;
+	auto get_num_actions() const -> std::size_t {
+		return actions.size();
+	}
+
+	auto get_cost_in_current_state(const FactSet &) const -> int;
+	auto get_cost_increase_in_current_state(const FactSet &) const -> int;
 	auto get_num_added_counters(const FactSet &) const -> int;
 	auto get_num_added_counters_estimate(const FactSet &) const -> int;
 	auto get_num_added_counter_groups(const FactSet &) const -> int;
@@ -167,7 +173,7 @@ public:
 			return std::all_of(std::begin(c->facts), std::end(c->facts), [this](const auto &f) { return f.value < task->get_variable_domain_size(f.var); });
 		}));
 		out.close();
-		std::experimental::filesystem::rename(std::experimental::filesystem::path(temp_file_name), std::experimental::filesystem::path(file_name));
+		std::filesystem::rename(std::filesystem::path(temp_file_name), std::filesystem::path(file_name));
 	}
 
 	// FD plugin
@@ -422,18 +428,17 @@ private:
 
 	void reset_heuristic();
 	
-	auto compute_best_supporter_function(const State &) -> cost_t;
+	auto compute_best_supporter_function(const State &) -> int;
 
-	auto compute_hcadd(const State &) -> cost_t;
-	auto compute_hcadd_alternative(const State &) -> cost_t;
+	auto compute_hcadd(const State &) -> int;
+	auto compute_hcadd_alternative(const State &) -> int;
 
 	auto compute_hcmax(const State &) -> int;
 	auto compute_hcmax_greedy(const State &) -> int;
 
 	void extract_relaxed_plan();
-	auto select_conjunction_and_action(std::map<cost_t, std::vector<Conjunction *>> &) -> std::pair<Conjunction *, const Action *>;
+	auto select_conjunction_and_action(std::map<int, std::vector<Conjunction *>> &) -> std::pair<Conjunction *, const Action *>;
 
-	// TODO: move to utils
 	void verify_relaxed_plan(const BestSupporterGraph &) const;
 
 	void remove_conjunction(Conjunction *);

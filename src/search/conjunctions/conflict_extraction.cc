@@ -105,6 +105,7 @@ ConflictExtraction::ConflictExtraction(const options::Options &opts) :
 	scoring(opts.get_enum_list<ScoringMethod>("conflict_order")),
 	online_scoring(get_online_scoring(scoring, false)),
 	annotations_after_priority(get_online_scoring(scoring, !scoring.empty() && scoring.front() != ScoringMethod::PRIORITY)),
+	fewest_counters_estimation_threshold(opts.get<int>("fewest_counters_estimation_threshold")),
 	statistics(),
 	statistics_printer(opts.get<int>("statistics_interval") != -1 ? std::make_unique<TimedPrinter>(opts.get<int>("statistics_interval")) : nullptr) {
 	auto random_pos = std::find(std::begin(scoring), std::end(scoring), ScoringMethod::RANDOM);
@@ -367,10 +368,10 @@ auto ConflictExtraction::generate_conflicts(const AbstractTask &task, BestSuppor
 	auto prefer_lower_priority = optimize_priority && !scoring.empty() && scoring.front() == ScoringMethod::PRIORITY;
 	switch (conflict_extraction_algorithm) {
 	case ConjunctionGenerationAlgorithm::BSG:
-		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_bsg(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority), scoring, annotations_after_priority, heuristic, count, statistics);
+		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_bsg(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority), scoring, annotations_after_priority, heuristic, count, fewest_counters_estimation_threshold, statistics);
 		break;
 	case ConjunctionGenerationAlgorithm::RP:
-		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_rp(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority, only_immediate_conflicts), scoring, annotations_after_priority, heuristic, count, statistics);
+		result = CEHelper::apply_tie_breaking(CEHelper::generate_candidate_conjunctions_from_rp(task, bsg, heuristic, statistics, online_scoring, actual_max_conflicts, parallel_conflict_priority, count, prefer_lower_priority, only_immediate_conflicts), scoring, annotations_after_priority, heuristic, count, fewest_counters_estimation_threshold, statistics);
 		break;
 	default:
 		std::cerr << "Unknown conflict extraction algorithm." << std::endl;
@@ -430,7 +431,7 @@ template<>
 void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, double>>::combine(ConflictSet &conflicts, ConflictSet &&other, const std::vector<ScoringMethod> &annotations) {
 	assert(annotations.size() == 1);
 	for (auto &&conflict : other) {
-		auto pos = conflicts.find(conflict.first);
+		const auto pos = conflicts.find(conflict.first);
 		if (pos != std::end(conflicts))
 			pos->second = combine_scores(pos->second, conflict.second, annotations.front());
 		else
@@ -442,7 +443,7 @@ template<>
 void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector<double>>>::combine(ConflictSet &conflicts, ConflictSet &&other, const std::vector<ScoringMethod> &annotations) {
 	assert(annotations.size() > 1);
 	for (auto &&conflict : other) {
-		auto pos = conflicts.find(conflict.first);
+		const auto pos = conflicts.find(conflict.first);
 		if (pos != std::end(conflicts)) {
 			assert(annotations.size() == pos->second.size());
 			assert(annotations.size() == conflict.second.size());
@@ -457,7 +458,7 @@ void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector
 template<>
 void ConflictExtraction::ConflictExtractionHelper<FactSet>::combine(std::unordered_map<FactSet, double> &conflicts, ConflictSet &&other, int priority, const std::vector<ScoringMethod> &) {
 	for (auto &&conflict : other) {
-		auto pos = conflicts.find(conflict);
+		const auto pos = conflicts.find(conflict);
 		if (pos != std::end(conflicts))
 			pos->second = std::min(pos->second, static_cast<double>(priority));
 		else
@@ -468,9 +469,9 @@ void ConflictExtraction::ConflictExtractionHelper<FactSet>::combine(std::unorder
 template<>
 void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, double>>::combine(std::unordered_map<FactSet, std::vector<double>> &conflicts, ConflictSet &&other, int priority, const std::vector<ScoringMethod> &annotations) {
 	assert(annotations.size() == 2);
-	auto priority_index = annotations.front() == ScoringMethod::PRIORITY ? 0u : 1u;
+	const auto priority_index = annotations.front() == ScoringMethod::PRIORITY ? 0u : 1u;
 	assert(annotations[priority_index] == ScoringMethod::PRIORITY);
-	auto other_index = 1u - priority_index;
+	const auto other_index = 1u - priority_index;
 	for (auto &&conflict : other) {
 		auto pos = conflicts.find(conflict.first);
 		if (pos != std::end(conflicts)) {
@@ -492,9 +493,9 @@ void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, double>>::c
 template<>
 void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector<double>>>::combine(std::unordered_map<FactSet, std::vector<double>> &conflicts, ConflictSet &&other, int priority, const std::vector<ScoringMethod> &annotations) {
 	assert(annotations.size() > 2);
-	auto priority_pos = std::find(std::begin(annotations), std::end(annotations), ScoringMethod::PRIORITY);
+	const auto priority_pos = std::find(std::begin(annotations), std::end(annotations), ScoringMethod::PRIORITY);
 	assert(priority_pos != std::end(annotations));
-	auto priority_index = static_cast<std::size_t>(priority_pos - std::begin(annotations));
+	const auto priority_index = static_cast<std::size_t>(priority_pos - std::begin(annotations));
 	for (auto &&conflict : other) {
 		auto pos = conflicts.find(conflict.first);
 		if (pos != std::end(conflicts)) {
@@ -515,7 +516,7 @@ void ConflictExtraction::ConflictExtractionHelper<std::pair<FactSet, std::vector
 
 template<>
 void ConflictExtraction::ConflictExtractionHelper<FactSet>::append_conflicts(std::vector<FactSet> &converted, ConflictSet &&conflicts) {
-	auto size = converted.size();
+	const auto size = converted.size();
 	for (auto &&conflict : conflicts)
 		if (std::find(std::begin(converted), std::begin(converted) + size, conflict) == std::begin(converted) + size)
 			converted.emplace_back(std::move(conflict));
@@ -523,14 +524,14 @@ void ConflictExtraction::ConflictExtractionHelper<FactSet>::append_conflicts(std
 
 template<typename ConflictType>
 void ConflictExtraction::ConflictExtractionHelper<ConflictType>::append_conflicts(std::vector<FactSet> &converted, ConflictSet &&conflicts) {
-	auto size = converted.size();
+	const auto size = converted.size();
 	for (auto &&conflict : conflicts)
 		if (std::find(std::begin(converted), std::begin(converted) + size, conflict.first) == std::begin(converted) + size)
 			converted.emplace_back(std::move(conflict.first));
 }
 
 template<typename ConflictType>
-auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(std::vector<ConflictSet> &&conflicts, const std::vector<ScoringMethod> &scoring, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics) -> std::vector<FactSet> {
+auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(std::vector<ConflictSet> &&conflicts, const std::vector<ScoringMethod> &scoring, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics) -> std::vector<FactSet> {
 	// 1. if priority not in scoring, just throw everything together and apply tie breaking there
 	// 2. if priority is in scoring and first, collect lowest possible priority up to count. then break ties on the remaining elements with equal priority. example with count = 10:
 	//    |0000111222|22222333... return the first seven elements + apply_tie_breaking(22222222, scoring w/o priority, count - 7)
@@ -538,13 +539,13 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 
 	if (conflicts.empty() || count == 0)
 		return {};
-	auto priority_pos = std::find(std::begin(scoring), std::end(scoring), ScoringMethod::PRIORITY);
+	const auto priority_pos = std::find(std::begin(scoring), std::end(scoring), ScoringMethod::PRIORITY);
 	if (priority_pos == std::end(scoring)) {
 		// ignore priority
 		auto all_conflicts = ConflictSet();
 		for (auto &&some_conflicts : conflicts)
 			combine(all_conflicts, std::move(some_conflicts), annotations_after_priority);
-		return apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, statistics);
+		return apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, fewest_counters_estimation_threshold, statistics);
 	}
 	if (priority_pos == std::begin(scoring)) {
 		// consider priority first
@@ -554,8 +555,8 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 		for (; i < conflicts.size() && min_priority_conflicts.size() + conflicts[i].size() <= static_cast<std::size_t>(count); ++i)
 			append_conflicts(min_priority_conflicts, std::move(conflicts[i]));
 		for (; i < conflicts.size() && min_priority_conflicts.size() < static_cast<std::size_t>(count); ++i) {
-			auto other_priority_conflicts = apply_tie_breaking(std::move(conflicts[i]), std::begin(scoring) + 1, std::end(scoring), annotations_after_priority, heuristic, count - min_priority_conflicts.size(), statistics);
-			auto size = min_priority_conflicts.size();
+			auto other_priority_conflicts = apply_tie_breaking(std::move(conflicts[i]), std::begin(scoring) + 1, std::end(scoring), annotations_after_priority, heuristic, count - min_priority_conflicts.size(), fewest_counters_estimation_threshold, statistics);
+			const auto size = min_priority_conflicts.size();
 			for (auto &&conflict : other_priority_conflicts)
 				if (std::find(std::begin(min_priority_conflicts), std::begin(min_priority_conflicts) + size, conflict) == std::begin(min_priority_conflicts) + size)
 					min_priority_conflicts.emplace_back(std::move(conflict));
@@ -571,20 +572,20 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 	for (auto i = 0u; i < conflicts.size(); ++i)
 		combine(all_conflicts, std::move(conflicts[i]), i, annotations_after_priority);
 #if !defined(__GNUC__) || __cpp_lib_type_trait_variable_templates >= 201510
-	return ConflictExtractionHelper<std::conditional_t<std::is_same_v<Conflict, FactSet>, std::pair<FactSet, double>, std::pair<FactSet, std::vector<double>>>>::apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, statistics);
+	return ConflictExtractionHelper<std::conditional_t<std::is_same_v<Conflict, FactSet>, std::pair<FactSet, double>, std::pair<FactSet, std::vector<double>>>>::apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, fewest_counters_estimation_threshold, statistics);
 #else
-	return ConflictExtractionHelper<std::conditional_t<std::is_same<Conflict, FactSet>::value, std::pair<FactSet, double>, std::pair<FactSet, std::vector<double>>>>::apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, statistics);
+	return ConflictExtractionHelper<std::conditional_t<std::is_same<Conflict, FactSet>::value, std::pair<FactSet, double>, std::pair<FactSet, std::vector<double>>>>::apply_tie_breaking(std::move(all_conflicts), std::begin(scoring), std::end(scoring), annotations_after_priority, heuristic, count, fewest_counters_estimation_threshold, statistics);
 #endif
 }
 
 template<typename ConflictType>
-auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(ConflictSet &&conflicts, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics) -> std::vector<FactSet> {
+auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(ConflictSet &&conflicts, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics) -> std::vector<FactSet> {
 	// convert to vector
 	auto conflicts_vector = std::vector<ConflictType>();
 	conflicts_vector.reserve(conflicts.size());
 	for (auto &&conflict : conflicts)
 		conflicts_vector.emplace_back(std::move(conflict));
-	apply_tie_breaking(std::begin(conflicts_vector), std::end(conflicts_vector), scoring_begin, scoring_end, annotations_after_priority, 0, heuristic, count, statistics);
+	apply_tie_breaking(std::begin(conflicts_vector), std::end(conflicts_vector), scoring_begin, scoring_end, annotations_after_priority, 0, heuristic, count, fewest_counters_estimation_threshold, statistics);
 	auto sorted_conflicts = std::vector<FactSet>();
 	auto size = std::min(conflicts_vector.size(), static_cast<std::size_t>(count));
 	sorted_conflicts.reserve(size);
@@ -596,7 +597,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 // from http://stackoverflow.com/a/17074810, with the small difference that we only care about the range [begin, end)
 template<typename Iterator>
 void apply_permutation_inplace(Iterator begin, Iterator end, const std::vector<std::size_t> &p) {
-	auto size = static_cast<std::size_t>(end - begin);
+	const auto size = static_cast<std::size_t>(end - begin);
 	assert(size <= p.size());
 	auto done = std::vector<bool>(size);
 	for (auto i = 0u; i < size; ++i) {
@@ -616,7 +617,7 @@ void apply_permutation_inplace(Iterator begin, Iterator end, const std::vector<s
 }
 
 template<typename ConflictType>
-void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(ConflictIterator conflicts_begin, ConflictIterator conflicts_end, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, ScoringIndex current_annotation_index, const ConjunctionsHeuristic &heuristic, int count, ConflictExtractionStatistics &statistics) {
+void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_breaking(ConflictIterator conflicts_begin, ConflictIterator conflicts_end, ScoringIterator scoring_begin, ScoringIterator scoring_end, const std::vector<ScoringMethod> &annotations_after_priority, ScoringIndex current_annotation_index, const ConjunctionsHeuristic &heuristic, int count, int fewest_counters_estimation_threshold, ConflictExtractionStatistics &statistics) {
 	const auto conflicts_size = conflicts_end - conflicts_begin;
 	if (conflicts_size <= count)
 		return;
@@ -635,9 +636,14 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 		std::reverse(conflicts_begin, conflicts_end);
 		return;
 	}
+	if (current_scoring_method == ScoringMethod::FEWEST_COUNTERS && conflicts_size * static_cast<long int>(heuristic.get_num_actions()) > fewest_counters_estimation_threshold) {
+		// switch to the estimate if the number of conflicts exceeds the threshold
+		++statistics.num_fewest_counters_estimate_switches;
+		current_scoring_method = ScoringMethod::FEWEST_COUNTERS_ESTIMATE;
+	}
 	if (is_online_scoring_method(current_scoring_method)) {
 #ifdef _MSC_VER
-		// not sure whats going on here... for some reason VS2017 complains about unreachable code in these lambdas
+		// for some reason VS2017 complains about unreachable code in these lambdas
 #pragma warning(push)
 #pragma warning(disable: 4702)
 #endif
@@ -671,7 +677,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 		assert(next_change_index < conflicts_size - 1 || next_change_index == conflicts_size);
 		assert(next_change_index == conflicts_size || test_inequality(*(conflicts_begin + next_change_index), *(conflicts_begin + next_change_index + 1)));
 		auto remaining_tie_break_count = count - last_change_index;
-		apply_tie_breaking(conflicts_begin + last_change_index, conflicts_begin + next_change_index, scoring_begin + 1, scoring_end, annotations_after_priority, current_annotation_index + 1, heuristic, remaining_tie_break_count, statistics);
+		apply_tie_breaking(conflicts_begin + last_change_index, conflicts_begin + next_change_index, scoring_begin + 1, scoring_end, annotations_after_priority, current_annotation_index + 1, heuristic, remaining_tie_break_count, fewest_counters_estimation_threshold, statistics);
 	} else {
 		auto scores = std::vector<double>();
 		scores.reserve(conflicts_size);
@@ -709,7 +715,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 		assert(next_change_index == conflicts_size || test_inequality(permutation[next_change_index], permutation[next_change_index + 1]));
 		apply_permutation_inplace(conflicts_begin, conflicts_begin + next_change_index, permutation);
 		auto remaining_tie_break_count = count - last_change_index;
-		apply_tie_breaking(conflicts_begin + last_change_index, conflicts_begin + next_change_index, scoring_begin + 1, scoring_end, annotations_after_priority, current_annotation_index, heuristic, remaining_tie_break_count, statistics);
+		apply_tie_breaking(conflicts_begin + last_change_index, conflicts_begin + next_change_index, scoring_begin + 1, scoring_end, annotations_after_priority, current_annotation_index, heuristic, remaining_tie_break_count, fewest_counters_estimation_threshold, statistics);
 	}
 }
 
@@ -941,22 +947,28 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_parallel_c
 
 template<typename ConflictType>
 auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candidate_conjunctions_from_rp(const AbstractTask &task, const BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, ConflictExtractionStatistics &statistics, const std::vector<ScoringMethod> &online_scoring, int max_conflicts, int parallel_conflict_priority, int count, bool prefer_lower_priority, bool only_immediate_conflicts) -> std::vector<ConflictSet> {
-	using BSGIndex = typename decltype(bsg.nodes)::size_type;
+	using BSGIndex = int;
 	auto preconditions = std::unordered_map<Conjunction *, BSGIndex>();
 
-	auto build_shortest_paths = [&bsg]() -> std::vector<std::vector<std::tuple<BSGIndex, Conjunction *, int>>> {
+	struct shortest_path_data {
+		Conjunction *conjunction;
+		BSGIndex best_predecessor;
+		int length;
+	};
+
+	auto build_shortest_paths = [&bsg]() -> std::vector<std::vector<shortest_path_data>> {
 		// for each node store the best predecessor, edge label, and cost for each reachable predecessor
-		auto shortest_paths = std::vector<std::vector<std::tuple<BSGIndex, Conjunction *, int>>>(bsg.nodes.size(),
-			std::vector<std::tuple<BSGIndex, Conjunction *, int>>(bsg.nodes.size(), {static_cast<BSGIndex>(-1), nullptr, std::numeric_limits<int>::max()}));
+		auto shortest_paths = std::vector<std::vector<shortest_path_data>>(bsg.nodes.size(),
+			std::vector<shortest_path_data>(bsg.nodes.size(), {nullptr, static_cast<BSGIndex>(-1), std::numeric_limits<int>::max()}));
 		auto update = [&bsg, &shortest_paths](auto index, auto precondition) {
 			assert(precondition->has_supporter());
 			auto predecessor_index = precondition->supporter_pos;
-			for (auto i = index + 1; i < bsg.nodes.size(); ++i)
-				if (std::get<2>(shortest_paths[index][i]) > std::get<2>(shortest_paths[predecessor_index][i]))
-					shortest_paths[index][i] = {predecessor_index, precondition, std::get<2>(shortest_paths[predecessor_index][i]) + 1};
+			for (auto i = index + 1; i < static_cast<BSGIndex>(bsg.nodes.size()); ++i)
+				if (shortest_paths[index][i].length > shortest_paths[predecessor_index][i].length)
+					shortest_paths[index][i] = {precondition, predecessor_index, shortest_paths[predecessor_index][i].length + 1};
 		};
-		for (auto i = bsg.nodes.size() - 1; i != static_cast<BSGIndex>(-1); --i) {
-			shortest_paths[i][i] = {i, nullptr, 0};
+		for (auto i = static_cast<BSGIndex>(bsg.nodes.size()) - 1; i != static_cast<BSGIndex>(-1); --i) {
+			shortest_paths[i][i] = {nullptr, i, 0};
 			for (const auto &precondition : bsg[i].precondition_conjunctions) {
 				assert(!precondition->has_supporter() || precondition->supporter_pos > static_cast<int>(i));
 				if (precondition->has_supporter())
@@ -968,7 +980,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 
 	auto build_ancestors_list = [&bsg]() -> std::vector<boost::dynamic_bitset<>> {
 		auto ancestors = std::vector<boost::dynamic_bitset<>>(bsg.nodes.size(), boost::dynamic_bitset<>(bsg.nodes.size()));
-		for (auto i = bsg.nodes.size() - 1; i != static_cast<BSGIndex>(-1); --i) {
+		for (auto i = static_cast<BSGIndex>(bsg.nodes.size()) - 1; i != static_cast<BSGIndex>(-1); --i) {
 			ancestors[i].set(i);
 			for (const auto &precondition : bsg[i].precondition_conjunctions) {
 				assert(!precondition->has_supporter() || precondition->supporter_pos > static_cast<int>(i));
@@ -983,14 +995,14 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 	assert(ancestors[0].all());
 
 	auto shortest_paths = build_shortest_paths();
-	assert(std::all_of(std::begin(shortest_paths[0]), std::end(shortest_paths[0]), [](const auto &x) { return std::get<2>(x) < std::numeric_limits<int>::max(); }));
+	assert(std::all_of(std::begin(shortest_paths[0]), std::end(shortest_paths[0]), [](const auto &x) { return x.length < std::numeric_limits<int>::max(); }));
 
 	auto construct_path = [&shortest_paths](auto from, auto to) -> std::vector<Conjunction *> {
-		assert(std::get<2>(shortest_paths[to][from]) < std::numeric_limits<int>::max());
-		auto path = std::vector<Conjunction *>(std::get<2>(shortest_paths[to][from]), nullptr);
-		for (auto i = std::get<2>(shortest_paths[to][from]) - 1; i >= 0; --i) {
-			path[i] = std::get<1>(shortest_paths[to][from]);
-			to = std::get<0>(shortest_paths[to][from]);
+		assert(shortest_paths[to][from].length < std::numeric_limits<int>::max());
+		auto path = std::vector<Conjunction *>(shortest_paths[to][from].length, nullptr);
+		for (auto i = shortest_paths[to][from].length - 1; i >= 0; --i) {
+			path[i] = shortest_paths[to][from].conjunction;
+			to = shortest_paths[to][from].best_predecessor;
 		}
 		assert(static_cast<int>(to) == static_cast<int>(from));
 		return path;
@@ -1009,7 +1021,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 	conflicts.resize(std::max<typename decltype(conflicts)::size_type>(bsg.nodes.size(), parallel_conflict_priority + 1));
 
 	if (prefer_lower_priority) {
-		for (auto i = static_cast<BSGIndex>(0); i < bsg.nodes.size() && num_conflicts < max_conflicts; ++i) {
+		for (auto i = static_cast<BSGIndex>(0); i < static_cast<BSGIndex>(bsg.nodes.size()) && num_conflicts < max_conflicts; ++i) {
 			const auto &bsg_node = bsg[i];
 			const auto &precondition_conjunctions = heuristic.cross_context ?
 				bsg_node.precondition_conjunctions :
@@ -1043,7 +1055,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 
 	if (!prefer_lower_priority || num_conflicts < count) {
 		// NOTE: this stuff should be reasonably fast, only the common descendant could be found quicker with a more complex algorithm
-		for (auto i = static_cast<BSGIndex>(0); i < bsg.nodes.size() && num_conflicts < max_conflicts; ++i) {
+		for (auto i = static_cast<BSGIndex>(0); i < static_cast<BSGIndex>(bsg.nodes.size()) && num_conflicts < max_conflicts; ++i) {
 			auto min_priority = std::numeric_limits<int>::max();
 			for (const auto &precondition : preconditions) {
 				auto first_deleted = std::find_if(std::begin(precondition.first->facts), std::end(precondition.first->facts), [&task, &bsg, i](const auto &f) {
@@ -1055,7 +1067,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 					assert(deleter > failed);
 					if (ancestors[failed][deleter]) {
 						// sequential conflict
-						const auto priority = std::get<2>(shortest_paths[failed][deleter]) - 1;
+						const auto priority = shortest_paths[failed][deleter].length - 1;
 						if (prefer_lower_priority) {
 							if (min_priority != std::numeric_limits<int>::max() && priority > min_priority && static_cast<int>(conflicts[min_priority].size()) >= count)
 								continue;
@@ -1112,13 +1124,14 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 }
 
 
-void ConflictExtraction::print_statistics() {
+void ConflictExtraction::print_statistics() const {
 	if (statistics_printer) {
 		auto ss = std::stringstream();
 		ss << "Average conflict tie break size: " << statistics.get_avg_tie_break_size() << std::endl;
 		ss << "Maximum conflict tie break size: " << statistics.max_tie_break_size << std::endl;
 		ss << "Average number of conflicts: " << statistics.get_avg_num_conflicts() << std::endl;
 		ss << "Maximum number of conflicts: " << statistics.max_num_conflicts << std::endl;
+		ss << "Number of switches to fewest counters estimate: " << statistics.num_fewest_counters_estimate_switches << std::endl;
 		statistics_printer->print(ss.str());
 	}
 }
@@ -1134,7 +1147,7 @@ static auto _parse(options::OptionParser &parser) -> std::shared_ptr<ConflictExt
 	parser.add_option<int>("parallel_conflict_priority", "Parallel conflict priority", "1");
 	parser.add_option<bool>("optimize_priority", "Greedily optimize for priority as the first tie breaker (may exclude some conflicts).", "true");
 	parser.add_option<bool>("only_immediate_conflicts", "Ignore conflicts that have other conflicts between the deleter and failed action.", "true");
-	auto conflict_order_choices = std::vector<std::string>{"RANDOM", "PRIORITY", "RP_DISTANCE", "SMALLEST_SIZE", "BIGGEST_SIZE",
+	const auto conflict_order_choices = std::vector<std::string>{"RANDOM", "PRIORITY", "RP_DISTANCE", "SMALLEST_SIZE", "BIGGEST_SIZE",
 		"MIN_DELETER_ALTERNATIVES_ABSOLUTE", "MAX_DELETER_ALTERNATIVES_ABSOLUTE",
 		"MIN_DELETER_ALTERNATIVES_ABSOLUTE_STRICT", "MAX_DELETER_ALTERNATIVES_ABSOLUTE_STRICT",
 		"MIN_DELETER_ALTERNATIVES_RELATIVE", "MAX_DELETER_ALTERNATIVES_RELATIVE",
@@ -1146,6 +1159,9 @@ static auto _parse(options::OptionParser &parser) -> std::shared_ptr<ConflictExt
 	parser.add_enum_list_option("conflict_order", conflict_order_choices,
 		"Conflict ordering. The final tie breaker is implicitly arbitrary. The list can also be empty, in which case simply the first conflict is chosen.",
 		"[PRIORITY, FEWEST_COUNTERS]");
+	parser.add_option<int>("fewest_counters_estimation_threshold",
+		"use FEWEST_COUNTERS_ESTIMATE in place of FEWEST_COUNTERS if the required number of regressability checks would exceed this threshold",
+		"infinity", options::Bounds("0", "infinity"));
 	parser.add_option<int>("statistics_interval", "print statistics every X seconds", "-1");
 	if (parser.help_mode() || parser.dry_run())
 		return nullptr;

@@ -80,6 +80,7 @@ private:
 			num_search_space_exhaustion(0),
 			num_dead_ends(0),
 			total_dead_end_backjump_length(0),
+			num_expansions_in_ehc_phases_with_refinement(0),
 			novelty_timer() {
 			novelty_timer.stop();
 			novelty_timer.reset();
@@ -94,10 +95,15 @@ private:
 		int num_search_space_exhaustion;
 		int num_dead_ends;
 		int total_dead_end_backjump_length;
+		int num_expansions_in_ehc_phases_with_refinement;
 		utils::Timer novelty_timer;
 
 		auto get_avg_expansions_per_ehc_phase(int num_total_expansions) const -> double {
 			return num_ehc_phases != 0 ? num_total_expansions / static_cast<double>(num_ehc_phases) : 0.;
+		}
+
+		auto get_avg_expansions_per_ehc_phase_with_refinement(int num_refinement_phases) const -> double {
+			return num_refinement_phases != 0 ? num_expansions_in_ehc_phases_with_refinement / static_cast<double>(num_refinement_phases) : 0.;
 		}
 
 		auto get_avg_stagnation_count(int num_learning_calls) const -> double {

@@ -20,10 +20,24 @@ FFHeuristic::FFHeuristic(const Options &opts)
 FFHeuristic::~FFHeuristic() {
 }
 
+auto FFHeuristic::get_last_subgoals_and_costs() const -> std::vector<std::pair<FactPair, int>> {
+	return subgoals_and_costs;
+}
+
+auto FFHeuristic::get_last_relaxed_plan() const -> std::vector<const GlobalOperator *> {
+    auto plan = std::vector<const GlobalOperator*>();
+    for (size_t op_no = 0; op_no < relaxed_plan.size(); ++op_no)
+        if (relaxed_plan[op_no])
+            plan.push_back(task_proxy.get_operators()[op_no].get_global_operator());
+    return plan;
+}
+
 void FFHeuristic::mark_preferred_operators_and_relaxed_plan(
     const State &state, Proposition *goal) {
     if (!goal->marked) { // Only consider each subgoal once.
         goal->marked = true;
+		assert(goal->cost >= 0);
+		subgoals_and_costs.emplace_back(goal->fact, goal->cost);
         UnaryOperator *unary_op = goal->reached_by;
         if (unary_op) { // We have not yet chained back to a start node.
             for (size_t i = 0; i < unary_op->precondition.size(); ++i)
@@ -50,9 +64,13 @@ void FFHeuristic::mark_preferred_operators_and_relaxed_plan(
 
 int FFHeuristic::compute_heuristic(const GlobalState &global_state) {
     State state = convert_global_state(global_state);
-    long long h_add = compute_add_and_ff(state);
+    int h_add = compute_add_and_ff(state);
     if (h_add == DEAD_END)
         return h_add;
+
+    subgoals_and_costs.clear();
+    for (size_t op_no = 0; op_no < relaxed_plan.size(); ++op_no)
+        relaxed_plan[op_no] = false; // Clean up for next computation.
 
     // Collecting the relaxed plan also sets the preferred operators.
     for (size_t i = 0; i < goal_propositions.size(); ++i)
@@ -61,7 +79,6 @@ int FFHeuristic::compute_heuristic(const GlobalState &global_state) {
     int h_ff = 0;
     for (size_t op_no = 0; op_no < relaxed_plan.size(); ++op_no) {
         if (relaxed_plan[op_no]) {
-            relaxed_plan[op_no] = false; // Clean up for next computation.
             h_ff += task_proxy.get_operators()[op_no].get_cost();
         }
     }

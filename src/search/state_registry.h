@@ -204,6 +204,12 @@ public:
     GlobalState get_successor_state(const GlobalState &predecessor, const GlobalOperator &op);
 
     /*
+      Import a state from another state registry. Performs duplicate checking
+      against the states generated in this state registry.
+    */
+    GlobalState import_state(const GlobalState &state);
+
+    /*
       Returns the number of states registered so far.
     */
     size_t size() const {

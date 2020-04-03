@@ -27,20 +27,20 @@
  */
 
 
-template<typename Value, typename KeyType = int>
+template<typename Value>
 class AbstractQueue {
 public:
-    typedef std::pair<KeyType, Value> Entry;
+    typedef std::pair<int, Value> Entry;
 
     AbstractQueue() {}
     virtual ~AbstractQueue() {}
 
-    virtual void push(KeyType key, const Value &value) = 0;
+    virtual void push(int key, const Value &value) = 0;
     virtual Entry pop() = 0;
     virtual bool empty() const = 0;
     virtual void clear() = 0;
 
-    virtual AbstractQueue<Value, KeyType> *convert_if_necessary(KeyType /*key*/) {
+    virtual AbstractQueue<Value> *convert_if_necessary(int /*key*/) {
         /* Determine if this queue would still offer adequate
            performance after pushing another element with the given
            key.
@@ -66,9 +66,9 @@ public:
 };
 
 
-template<typename Value, typename KeyType = int>
-class HeapQueue : public AbstractQueue<Value, KeyType> {
-    typedef typename AbstractQueue<Value, KeyType>::Entry Entry;
+template<typename Value>
+class HeapQueue : public AbstractQueue<Value> {
+    typedef typename AbstractQueue<Value>::Entry Entry;
 
     struct compare_func {
         bool operator()(const Entry &lhs, const Entry &rhs) const {
@@ -91,7 +91,7 @@ public:
     virtual ~HeapQueue() {
     }
 
-    virtual void push(KeyType key, const Value &value) {
+    virtual void push(int key, const Value &value) {
         heap.push(std::make_pair(key, value));
     }
 
@@ -110,11 +110,11 @@ public:
         heap.c.clear();
     }
 
-    static HeapQueue<Value, KeyType> *create_from_sorted_entries_destructively(
+    static HeapQueue<Value> *create_from_sorted_entries_destructively(
         std::vector<Entry> &entries) {
         // Create a new heap from the entries, which must be sorted.
         // The passed-in vector is cleared as a side effect.
-        HeapQueue<Value, KeyType> *result = new HeapQueue<Value, KeyType>;
+        HeapQueue<Value> *result = new HeapQueue<Value>;
         result->heap.c.swap(entries);
         // Since the entries are sorted, we do not need to heapify.
         return result;
@@ -125,11 +125,11 @@ public:
 };
 
 
-template<typename Value, typename KeyType = int>
-class BucketQueue : public AbstractQueue<Value, KeyType> {
+template<typename Value>
+class BucketQueue : public AbstractQueue<Value> {
     static const int MIN_BUCKETS_BEFORE_SWITCH = 100;
 
-    typedef typename AbstractQueue<Value, KeyType>::Entry Entry;
+    typedef typename AbstractQueue<Value>::Entry Entry;
 
     typedef std::vector<Value> Bucket;
     std::vector<Bucket> buckets;
@@ -149,7 +149,7 @@ class BucketQueue : public AbstractQueue<Value, KeyType> {
         // order, removing them from this queue as a side effect.
         assert(result.empty());
         result.reserve(num_entries);
-        for (KeyType key = current_bucket_no; num_entries != 0; ++key) {
+        for (int key = current_bucket_no; num_entries != 0; ++key) {
             Bucket &bucket = buckets[key];
             for (size_t i = 0; i < bucket.size(); ++i)
                 result.push_back(std::make_pair(key, bucket[i]));
@@ -166,7 +166,7 @@ public:
     virtual ~BucketQueue() {
     }
 
-    virtual void push(KeyType key, const Value &value) {
+    virtual void push(int key, const Value &value) {
         ++num_entries;
         ++num_pushes;
         assert(num_pushes > 0); // Check against overflow.
@@ -205,14 +205,14 @@ public:
         num_pushes = 0;
     }
 
-    virtual AbstractQueue<Value, KeyType> *convert_if_necessary(KeyType key) {
+    virtual AbstractQueue<Value> *convert_if_necessary(int key) {
         if (key >= MIN_BUCKETS_BEFORE_SWITCH && key > num_pushes) {
             std::cout << "Switch from bucket-based to heap-based queue "
                       << "at key = " << key
                       << ", num_pushes = " << num_pushes << std::endl;
             std::vector<Entry> entries;
             extract_sorted_entries(entries);
-            return HeapQueue<Value, KeyType>::create_from_sorted_entries_destructively(
+            return HeapQueue<Value>::create_from_sorted_entries_destructively(
                 entries);
         }
         return this;
@@ -224,24 +224,24 @@ public:
 };
 
 
-template<typename Value, typename KeyType = int>
+template<typename Value>
 class AdaptiveQueue {
-    AbstractQueue<Value, KeyType> *wrapped_queue;
+    AbstractQueue<Value> *wrapped_queue;
     // Forbid assigning or copying -- would need to implement them properly.
-    AdaptiveQueue &operator=(const AdaptiveQueue<Value, KeyType> &);
-    AdaptiveQueue(const AdaptiveQueue<Value, KeyType> &);
+    AdaptiveQueue &operator=(const AdaptiveQueue<Value> &);
+    AdaptiveQueue(const AdaptiveQueue<Value> &);
 public:
-    typedef std::pair<KeyType, Value> Entry;
+    typedef std::pair<int, Value> Entry;
 
-    AdaptiveQueue() : wrapped_queue(new BucketQueue<Value, KeyType>) {
+    AdaptiveQueue() : wrapped_queue(new BucketQueue<Value>) {
     }
 
     ~AdaptiveQueue() {
         delete wrapped_queue;
     }
 
-    void push(KeyType key, const Value &value) {
-        AbstractQueue<Value, KeyType> *q = wrapped_queue->convert_if_necessary(key);
+    void push(int key, const Value &value) {
+        AbstractQueue<Value> *q = wrapped_queue->convert_if_necessary(key);
         if (q != wrapped_queue) {
             delete wrapped_queue;
             wrapped_queue = q;

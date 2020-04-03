@@ -2,6 +2,7 @@
 #define CONJUNCTIONS_NOVELTY_HEURISTIC_H
 
 #include "../heuristic.h"
+#include "conjunctions_subset_generator.h"
 
 namespace conjunctions {
 class ConjunctionsHeuristic;
@@ -51,7 +52,7 @@ public:
 		return heuristics;
 	}
 
-	auto get_conjunctions() const -> const std::vector<Conjunction> & {
+	auto get_conjunctions() const -> const std::vector<std::unique_ptr<Conjunction>> & {
 		return conjunctions;
 	}
 
@@ -66,9 +67,10 @@ public:
 	}
 
 protected:
-	std::vector<Conjunction> conjunctions;
+	std::vector<std::unique_ptr<Conjunction>> conjunctions;
 	const std::vector<Heuristic *> heuristics;
 	conjunctions::ConjunctionsHeuristic *conjunctions_heuristic;
+	std::unique_ptr<conjunctions::ConjunctionSubsetGenerator<Conjunction>> subset_generator;
 
 	int num_singletons;
 
@@ -76,6 +78,16 @@ protected:
 
 	int compute_heuristic(const GlobalState &state) override;
 	virtual void update_conjunction(const GlobalState &state, Conjunction &conjunction, std::size_t heuristic_index, int value);
+};
+
+
+class MNoveltyHeuristic : public NoveltyHeuristic {
+public:
+	MNoveltyHeuristic(const options::Options &options);
+	~MNoveltyHeuristic() = default;
+
+private:
+	void add_all_combinations(const FactSet &base, int max_size);
 };
 
 
