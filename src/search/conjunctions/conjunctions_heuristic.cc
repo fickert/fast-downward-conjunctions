@@ -34,7 +34,6 @@ ConjunctionsHeuristic::ConjunctionsHeuristic(const options::Options &opts) :
 	actions(),
 	actions_by_effects(),
 	conjunctions(),
-	conjunctions_containing_fact(),
 	counter_groups(),
 	unused_counter_groups(),
 	counter_groups_by_regression(*task, [](const std::vector<FactPair> &) { return COUNTER_GROUP_NONE; }),
@@ -49,6 +48,7 @@ ConjunctionsHeuristic::ConjunctionsHeuristic(const options::Options &opts) :
 	cross_context(opts.get<bool>("cross_context")),
 	best_supporter_function(BestSupporterFunction(opts.get_enum("best_supporter"))),
 	tie_breaking(TieBreaking(opts.get_enum("tie_breaking"))),
+	track_conjunction_usefulness(TrackConjunctionUsefulness(opts.get_enum("track_conjunction_usefulness"))),
 	rng(opts.get<int>("seed") == -1 ? utils::RandomNumberGenerator() : utils::RandomNumberGenerator(opts.get<int>("seed"))),
 	num_singletons(0),
 	num_counters(0),
@@ -82,7 +82,6 @@ ConjunctionsHeuristic::ConjunctionsHeuristic(const options::Options &opts) :
 	for (auto i = 0; i < task->get_num_goals(); ++i)
 		goal_facts.push_back(task->get_goal_fact(i));
 
-	initialize_conjunctions_containing_fact();
 	initialize_actions();
 	add_all_singletons();
 
@@ -160,15 +159,23 @@ auto ConjunctionsHeuristic::compute_heuristic(const State &state) -> int {
 		bsg_is_valid = false;
 		current_state_values = state.get_values();
 		current_preferred_operators.clear();
-		for (auto &conjunction_statistic : conjunction_statistics)
+		for (auto &conjunction_statistic : conjunction_statistics) {
 			++conjunction_statistic.second.evaluations;
+			if (track_conjunction_usefulness == TrackConjunctionUsefulness::NONE)
+				continue;
+			if (is_conjunction_useful_simple(*conjunction_statistic.first)) {
+				++conjunction_statistic.second.useful_simple;
+				if (track_conjunction_usefulness == TrackConjunctionUsefulness::ADVANCED && is_conjunction_useful_advanced(*conjunction_statistic.first, true))
+					++conjunction_statistic.second.useful_advanced;
+			}
+		}
 
 		auto best_supporter_start_time = std::chrono::steady_clock::now();
 		auto best_supporter_value = compute_best_supporter_function(state);
 		best_supporter_time += std::chrono::steady_clock::now() - best_supporter_start_time;
 
 		if (no_relaxed_plan_extraction || best_supporter_value == DEAD_END)
-			return best_supporter_value;
+			return convert_cost(best_supporter_value);
 
 		auto relaxed_plan_extraction_start_time = std::chrono::steady_clock::now();
 		extract_relaxed_plan();
@@ -200,9 +207,7 @@ auto ConjunctionsHeuristic::compute_heuristic(const State &state) -> int {
 }
 
 auto ConjunctionsHeuristic::get_cost(const FactPair &fact) const -> int {
-	assert(!conjunctions_containing_fact[fact.var][fact.value].empty());
-	assert(conjunctions_containing_fact[fact.var][fact.value].front()->facts.size() == 1);
-	return conjunctions_containing_fact[fact.var][fact.value].front()->cost;
+	return singleton_conjunctions[fact.var][fact.value]->cost;
 }
 
 auto ConjunctionsHeuristic::is_last_bsg_valid_for_state(const State &state) const -> bool {
@@ -395,24 +400,21 @@ void ConjunctionsHeuristic::add_all_singletons() {
 	for (auto i = 0; i < task->get_num_variables(); ++i)
 		for (auto j = 0; j < task->get_variable_domain_size(i); ++j)
 			factsets.push_back({FactPair(i, j)});
-	add_conjunctions(factsets);
-#ifndef NDEBUG
+	add_conjunctions(factsets, true);
+	singleton_conjunctions.reserve(task->get_num_variables());
 	for (auto i = 0; i < task->get_num_variables(); ++i)
-		for (auto j = 0; j < task->get_variable_domain_size(i); ++j)
-			assert(conjunctions_containing_fact[i][j].size() == 1);
-#endif
-}
-
-void ConjunctionsHeuristic::initialize_conjunctions_containing_fact() {
-	conjunctions_containing_fact.reserve(g_variable_domain.size());
-	for (auto variable_domain : g_variable_domain)
-		conjunctions_containing_fact.emplace_back(std::vector<std::vector<Conjunction *>>(variable_domain));
+		singleton_conjunctions.emplace_back(task->get_variable_domain_size(i));
+	for (auto *conjunction : conjunctions) {
+		assert(conjunction->facts.size() == 1u);
+		const auto fact = conjunction->facts.front();
+		singleton_conjunctions[fact.var][fact.value] = conjunction;
+	}
 }
 
 
 // best supporter functions
 
-auto ConjunctionsHeuristic::compute_best_supporter_function(const State &state) -> int {
+auto ConjunctionsHeuristic::compute_best_supporter_function(const State &state) -> cost_t {
 	reset_heuristic();
 	switch (best_supporter_function) {
 	case BestSupporterFunction::HCADD:
@@ -445,14 +447,14 @@ void ConjunctionsHeuristic::print_overflow_warning() {
 	}
 }
 
-auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> int {
-	using QueueEntry = std::pair<int, Conjunction *>;
+auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> cost_t {
+	using QueueEntry = std::pair<cost_t, Conjunction *>;
 	auto compare_cost = [](const QueueEntry &left, const QueueEntry &right) {
 		return left.first > right.first;
 	};
 	auto queue = std::priority_queue<QueueEntry, std::vector<QueueEntry>, decltype(compare_cost)>(compare_cost);
 
-	auto enqueue_if_necessary = [&queue](Conjunction *conjunction, int cost, const Action *supporter) {
+	auto enqueue_if_necessary = [&queue](Conjunction *conjunction, cost_t cost, const Action *supporter) {
 		if (conjunction->cost == -1 || conjunction->cost > cost) {
 			conjunction->cost = cost;
 			conjunction->supporters.clear();
@@ -468,20 +470,19 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> int {
 	dummy_precondition.initially_true = true;
 
 	// add conjunctions that are initially true
-	for (auto conjunction : conjunctions) {
-		if (is_subset(conjunction->facts, state)) {
-			enqueue_if_necessary(conjunction, 0, nullptr);
-			conjunction->initially_true = true;
-		}
+	const auto initial_conjunctions = conjunction_subset_generator->generate_conjunction_subset(state);
+	for (auto *conjunction : initial_conjunctions) {
+		enqueue_if_necessary(conjunction, 0, nullptr);
+		conjunction->initially_true = true;
 	}
 	
-	auto h = 0;
+	auto h = static_cast<cost_t>(0);
 
 	while (!queue.empty()) {
 		auto top_pair = queue.top();
 		queue.pop();
 		auto conjunction = top_pair.second;
-		int cost = top_pair.first;
+		auto cost = top_pair.first;
 
 		assert(conjunction->cost <= cost);
 
@@ -505,7 +506,9 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> int {
 			counter_group.cost += cost;
 
 			if (--counter_group.value == 0) {
-				assert(counter_group.cost == std::accumulate(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions), 0, [](auto sum, const auto regression_conjunction) { return sum + regression_conjunction->cost; }));
+				assert(counter_group.cost
+				       == std::accumulate(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions),
+				                          static_cast<cost_t>(0), [](auto sum, const auto regression_conjunction) { return sum + regression_conjunction->cost; }));
 				for (const auto &member : counter_group.group)
 					enqueue_if_necessary(member.second, counter_group.cost + member.first->cost, member.first);
 			}
@@ -516,16 +519,16 @@ auto ConjunctionsHeuristic::compute_hcadd(const State &state) -> int {
 	return DEAD_END;
 }
 
-auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> int {
+auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> cost_t {
 	// map to direclty access the conjunction vector for each cost
-	std::unordered_map<int, std::vector<Conjunction *> *> priority_map;
+	std::unordered_map<cost_t, std::vector<Conjunction *> *> priority_map;
 
 	// "priority queue"
-	using QueueElement = std::pair<int, std::vector<Conjunction *> *>;
+	using QueueElement = std::pair<cost_t, std::vector<Conjunction *> *>;
 	std::vector<QueueElement> queue;
 	queue.reserve(VECTOR_RESERVE_SIZE);
 
-	auto enqueue_if_necessary = [&priority_map, &queue](Conjunction *conjunction, int cost, const Action *supporter, int i) {
+	auto enqueue_if_necessary = [&priority_map, &queue](Conjunction *conjunction, cost_t cost, const Action *supporter, int i) {
 		if (conjunction->cost == -1 || conjunction->cost > cost) {
 			conjunction->cost = cost;
 			conjunction->supporters.clear();
@@ -553,18 +556,17 @@ auto ConjunctionsHeuristic::compute_hcadd_alternative(const State &state) -> int
 	dummy_precondition.initially_true = true;
 
 	// add conjunctions that are initially true
-	for (auto conjunction : conjunctions) {
-		if (is_subset(conjunction->facts, state)) {
-			enqueue_if_necessary(conjunction, 0, nullptr, 0);
-			conjunction->initially_true = true;
-		}
+	const auto initial_conjunctions = conjunction_subset_generator->generate_conjunction_subset(state);
+	for (auto *conjunction : initial_conjunctions) {
+		enqueue_if_necessary(conjunction, 0, nullptr, 0);
+		conjunction->initially_true = true;
 	}
 
-	int h = 0;
+	auto h = static_cast<cost_t>(0);
 
 	for (auto i = 0u; i < queue.size(); ++i) {
 		auto top_pair = queue[i];
-		int cost = top_pair.first;
+		auto cost = top_pair.first;
 
 		for (auto conjunction : *top_pair.second) {
 
@@ -609,11 +611,10 @@ auto ConjunctionsHeuristic::compute_hcmax_greedy(const State &state) -> int {
 	dummy_precondition.initially_true = true;
 
 	// add conjunctions that are initially true
-	for (auto conjunction : conjunctions) {
-		if (is_subset(conjunction->facts, state)) {
-			scheduled_conjunctions.push_back(conjunction);
-			conjunction->initially_true = true;
-		}
+	const auto initial_conjunctions = conjunction_subset_generator->generate_conjunction_subset(state);
+	for (auto *conjunction : initial_conjunctions) {
+		scheduled_conjunctions.push_back(conjunction);
+		conjunction->initially_true = true;
 	}
 
 	int i = 0;
@@ -665,11 +666,10 @@ auto ConjunctionsHeuristic::compute_hcmax(const State &state) -> int {
 	dummy_precondition.initially_true = true;
 
 	// add conjunctions that are initially true
-	for (auto conjunction : conjunctions) {
-		if (is_subset(conjunction->facts, state)) {
-			scheduled_conjunctions.push_back(conjunction);
-			conjunction->initially_true = true;
-		}
+	const auto initial_conjunctions = conjunction_subset_generator->generate_conjunction_subset(state);
+	for (auto *conjunction : initial_conjunctions) {
+		scheduled_conjunctions.push_back(conjunction);
+		conjunction->initially_true = true;
 	}
 
 	int i = 0;
@@ -724,7 +724,7 @@ auto ConjunctionsHeuristic::compute_hcmax(const State &state) -> int {
 void ConjunctionsHeuristic::extract_relaxed_plan() {
 	current_bsg.clear();
 
-	auto open_conjunctions = std::map<int, std::vector<Conjunction *>>();
+	auto open_conjunctions = std::map<cost_t, std::vector<Conjunction *>>();
 	if (tie_breaking == TieBreaking::CONFLICTS)
 		current_preconditions.clear();
 
@@ -785,43 +785,7 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 
 					// if cross context preconditions are enabled, we need to check if we introduced unreachable ones
 					if (cross_context) {
-						// additional facts needed as preconditions if we add this conjunction
-						auto only_new_facts = FactSet();
-						std::set_difference(std::begin(new_precondition_facts), std::end(new_precondition_facts), std::begin(precondition_facts), std::end(precondition_facts), std::back_inserter(only_new_facts));
-
-#ifndef NDEBUG
-						auto is_new_fact = [&only_new_facts](const auto &f) {
-							return std::binary_search(std::begin(only_new_facts), std::end(only_new_facts), f);
-						};
-						for (auto precondition_conjunction : precondition_conjunctions)
-							assert(std::none_of(std::begin(precondition_conjunction->facts), std::end(precondition_conjunction->facts), is_new_fact));
-#endif
-
-						// build new set of precondition conjunctions
-						auto new_precondition_conjunctions = precondition_conjunctions;
-						assert(std::is_sorted(std::begin(new_precondition_conjunctions), std::end(new_precondition_conjunctions)));
-
-						// add all potential new precondition conjunctions
-						for (const auto &fact : only_new_facts) {
-							for (auto precondition_conjunction : conjunctions_containing_fact[fact.var][fact.value]) {
-								if (!std::binary_search(std::begin(new_precondition_conjunctions) + precondition_conjunctions.size(), std::end(new_precondition_conjunctions), precondition_conjunction)
-										&& std::includes(std::begin(new_precondition_facts), std::end(new_precondition_facts), std::begin(precondition_conjunction->facts), std::end(precondition_conjunction->facts))) {
-									new_precondition_conjunctions.push_back(precondition_conjunction);
-									std::inplace_merge(std::begin(new_precondition_conjunctions) + precondition_conjunctions.size(),
-													   std::end(new_precondition_conjunctions) - 1,
-													   std::end(new_precondition_conjunctions));
-								}
-							}
-						}
-
-						std::inplace_merge(std::begin(new_precondition_conjunctions), std::begin(new_precondition_conjunctions) + precondition_conjunctions.size(), std::end(new_precondition_conjunctions));
-						assert(std::is_sorted(std::begin(new_precondition_conjunctions), std::end(new_precondition_conjunctions)));
-						assert(std::unique(std::begin(new_precondition_conjunctions), std::end(new_precondition_conjunctions)) == std::end(new_precondition_conjunctions));
-
-						// filter dominated conjunctions
-						new_precondition_conjunctions = get_non_dominated_conjunctions(new_precondition_conjunctions);
-						assert(std::is_sorted(std::begin(new_precondition_conjunctions), std::end(new_precondition_conjunctions)));
-						assert(std::unique(std::begin(new_precondition_conjunctions), std::end(new_precondition_conjunctions)) == std::end(new_precondition_conjunctions));
+						auto new_precondition_conjunctions = get_non_dominated_conjunctions(new_precondition_facts, *conjunction_subset_generator);
 
 						// if preconditions are unreachable we cannot add the conjunction
 						auto is_unreachable = [selected_conjunction](const Conjunction *conjunction) { return conjunction->cost < 0 || conjunction->cost >= selected_conjunction->cost; };
@@ -829,7 +793,7 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 							continue;
 
 						// set new precondition conjunctions
-						precondition_conjunctions = new_precondition_conjunctions;
+						precondition_conjunctions = std::move(new_precondition_conjunctions);
 					} else {
 						const auto &regression_conjunctions = counter_group.regression_conjunctions;
 						precondition_conjunctions.insert(std::end(precondition_conjunctions), std::begin(regression_conjunctions), std::end(regression_conjunctions));
@@ -860,7 +824,7 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 
 		// precondition conjunctions sanity check
 		if (cross_context) {
-			auto expected_precondition_conjunctions = get_non_dominated_conjunctions(precondition_facts, conjunctions_containing_fact);
+			auto expected_precondition_conjunctions = get_non_dominated_conjunctions(precondition_facts, *conjunction_subset_generator);
 			std::sort(std::begin(expected_precondition_conjunctions), std::end(expected_precondition_conjunctions));
 			assert(precondition_conjunctions_copy == std::vector<Conjunction *>{&dummy_precondition} || precondition_conjunctions_copy == expected_precondition_conjunctions);
 		}
@@ -912,16 +876,15 @@ void ConjunctionsHeuristic::extract_relaxed_plan() {
 		if (applicable) {
 			current_preferred_operators.push_back(selected_action->op->get_global_operator());
 #ifndef NDEBUG
-			for (const auto &fact : selected_action->pre) {
-				assert(conjunctions_containing_fact[fact.var][fact.value].front()->facts.size() == 1);
-				assert(conjunctions_containing_fact[fact.var][fact.value].front()->initially_true);
-			}
+			for (const auto &fact : selected_action->pre)
+				assert(singleton_conjunctions[fact.var][fact.value]->initially_true);
 #endif
 		}
 	}
 }
 
-auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<int, std::vector<Conjunction *>> &open_conjunctions) -> std::pair<Conjunction *, const Action *> {
+auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<cost_t, std::vector<Conjunction *>> &open_conjunctions)
+		-> std::pair<Conjunction *, const Action *> {
 	assert(!open_conjunctions.empty());
 	auto max_it = open_conjunctions.rbegin();
 	auto &candidate_conjunctions = max_it->second;
@@ -937,10 +900,10 @@ auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<int, std::vec
 		break;
 	}
 	case TieBreaking::DIFFICULTY: {
-		auto lowest_difficulty = std::numeric_limits<int>::max();
+		auto lowest_difficulty = std::numeric_limits<cost_t>::max();
 		for (auto conjunction : candidate_conjunctions) {
 			for (auto supporter : conjunction->supporters) {
-				int difficulty = 0;
+				cost_t difficulty = 0;
 				for (const auto precondition : counter_groups[conjunction->counter_groups[supporter]].regression_conjunctions)
 					difficulty += precondition->cost;
 				if (difficulty < lowest_difficulty) {
@@ -1029,7 +992,7 @@ auto ConjunctionsHeuristic::select_conjunction_and_action(std::map<int, std::vec
 	}
 	default: {
 		std::cout << "Unknown tie breaking option." << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 	}
 
@@ -1066,7 +1029,7 @@ void ConjunctionsHeuristic::verify_relaxed_plan(const BestSupporterGraph &bsg) c
 			// sort and remove duplicates, then filter dominated conjunctions
 			std::sort(std::begin(precondition_facts), std::end(precondition_facts));
 			precondition_facts.erase(std::unique(std::begin(precondition_facts), std::end(precondition_facts)), std::end(precondition_facts));
-			precondition_conjunctions = get_non_dominated_conjunctions(precondition_facts, conjunctions_containing_fact);
+			precondition_conjunctions = get_non_dominated_conjunctions(precondition_facts, *conjunction_subset_generator);
 		} else {
 			for (const auto supported_conjunction : bsg_node.supported_conjunctions) {
 				const auto &regression_conjunctions = counter_groups[supported_conjunction->counter_groups[bsg_node.action]].regression_conjunctions;
@@ -1090,7 +1053,7 @@ void ConjunctionsHeuristic::verify_relaxed_plan(const BestSupporterGraph &bsg) c
 
 #ifndef NDEBUG
 	// verify that all goal conjunctions are reached
-	for (const auto goal_conjunction : get_non_dominated_conjunctions(end_action->pre, conjunctions_containing_fact))
+	for (const auto goal_conjunction : get_non_dominated_conjunctions(end_action->pre, *conjunction_subset_generator))
 		assert(std::binary_search(reached.begin(), reached.end(), goal_conjunction) && "relaxed plan verification failed: goal conjunction not reached");
 #endif
 }
@@ -1143,7 +1106,7 @@ auto ConjunctionsHeuristic::compute_regressions(const FactSet &facts) const -> s
 	return regressions;
 }
 
-void ConjunctionsHeuristic::add_conjunctions(const std::vector<FactSet> &factsets) {
+void ConjunctionsHeuristic::add_conjunctions(const std::vector<FactSet> &factsets, bool singleton_initialization) {
 	if (factsets.empty())
 		return;
 #ifndef NDEBUG
@@ -1180,12 +1143,15 @@ void ConjunctionsHeuristic::add_conjunctions(const std::vector<FactSet> &factset
 	for (auto conjunction : new_conjunctions)
 		std::cout << "  " << *conjunction << std::endl;
 #endif
-	for (auto conjunction : new_conjunctions)
-		for (const auto &fact : conjunction->facts)
-			conjunctions_containing_fact[fact.var][fact.value].push_back(conjunction);
-
 	auto new_goal_conjunction = false;
 	auto added_counter_groups = std::unordered_set<CounterGroupIndex>();
+
+	if (singleton_initialization) {
+		conjunction_subset_generator = std::make_unique<ConjunctionSubsetGenerator<Conjunction>>(new_conjunctions);
+	} else {
+		for (auto *conjunction : new_conjunctions)
+			conjunction_subset_generator->add_conjunction(*conjunction);
+	}
 
 	for (auto conjunction : new_conjunctions) {
 		auto &facts = conjunction->facts;
@@ -1206,7 +1172,7 @@ void ConjunctionsHeuristic::add_conjunctions(const std::vector<FactSet> &factset
 						counter_group.regression_conjunctions = std::vector<Conjunction *>{&dummy_precondition};
 						dummy_precondition.regression_of.push_back(counter_group_index);
 					} else {
-						counter_group.regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, conjunctions_containing_fact);
+						counter_group.regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, *conjunction_subset_generator);
 						std::sort(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions));
 						for (auto regression_conjunction : counter_group.regression_conjunctions)
 							regression_conjunction->regression_of.push_back(counter_group_index);
@@ -1251,7 +1217,7 @@ void ConjunctionsHeuristic::add_conjunctions(const std::vector<FactSet> &factset
 					return std::includes(std::begin(regression_conjunction->facts), std::end(regression_conjunction->facts), std::begin(conjunction->facts), std::end(conjunction->facts));
 				});
 			})) {
-				auto new_regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, conjunctions_containing_fact);
+				auto new_regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, *conjunction_subset_generator);
 				std::sort(std::begin(new_regression_conjunctions), std::end(new_regression_conjunctions));
 				auto &old_regression_conjunctions = counter_group.regression_conjunctions;
 				assert(std::is_sorted(std::begin(old_regression_conjunctions), std::end(old_regression_conjunctions)));
@@ -1395,12 +1361,12 @@ auto ConjunctionsHeuristic::get_cost_in_current_state(const FactSet &facts) cons
 	auto potentially_supporting_actions = get_potentially_supporting_actions(facts);
 	for (const auto *action : potentially_supporting_actions) {
 		if (is_regressable_and_mutex_free(*action, facts, *task)) {
-			auto regression_conjunctions = get_non_dominated_conjunctions(compute_regression(*action, facts), conjunctions_containing_fact);
+			auto regression_conjunctions = get_non_dominated_conjunctions(compute_regression(*action, facts), *conjunction_subset_generator);
 			auto cost = best_supporter_function == BestSupporterFunction::HCADD || best_supporter_function == BestSupporterFunction::HCADD_ALTERNATIVE ? 
 				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), 0,
-					[compare](auto cost, auto regression_conjunction) { return std::max({cost, regression_conjunction->cost, regression_conjunction->cost + cost}, compare); }) :
+					[compare](auto cost, auto regression_conjunction) { return std::max({cost, convert_cost(regression_conjunction->cost), convert_cost(regression_conjunction->cost + cost)}, compare); }) :
 				std::accumulate(std::begin(regression_conjunctions), std::end(regression_conjunctions), 0,
-					[compare](auto cost, auto regression_conjunction) { return std::max(cost, regression_conjunction->cost, compare); });
+					[compare](auto cost, auto regression_conjunction) { return std::max(cost, convert_cost(regression_conjunction->cost), compare); });
 			min_cost = std::min(min_cost, cost, compare);
 		}
 	}
@@ -1409,7 +1375,7 @@ auto ConjunctionsHeuristic::get_cost_in_current_state(const FactSet &facts) cons
 
 auto ConjunctionsHeuristic::get_cost_increase_in_current_state(const FactSet &facts) const -> int {
 	assert(facts.size() > 1);
-	auto dominated = get_dominated_conjunctions_slow(facts);
+	auto dominated = get_all_conjunctions(facts, *conjunction_subset_generator);
 	auto max_cost = 0;
 	for (const auto conjunction : dominated) {
 		assert(max_cost >= 0);
@@ -1417,7 +1383,7 @@ auto ConjunctionsHeuristic::get_cost_increase_in_current_state(const FactSet &fa
 			assert(get_cost_in_current_state(facts) == -1);
 			return 0;
 		}
-		max_cost = std::max(max_cost, conjunction->cost);
+		max_cost = std::max(max_cost, convert_cost(conjunction->cost));
 	}
 	auto cost = get_cost_in_current_state(facts);
 	return cost == -1 ? std::numeric_limits<int>::max() : cost - max_cost;
@@ -1445,7 +1411,7 @@ auto ConjunctionsHeuristic::get_num_added_counter_groups(const FactSet &facts) c
 auto ConjunctionsHeuristic::get_num_added_counter_groups_estimate(const FactSet &facts) const -> int {
 	std::unordered_set<CounterGroupIndex> counter_group_indices;
 	for (const auto &f : facts)
-		for (const auto &counter_group_pair : conjunctions_containing_fact[f.var][f.value].front()->counter_groups)
+		for (const auto &counter_group_pair : singleton_conjunctions[f.var][f.value]->counter_groups)
 			counter_group_indices.insert(counter_group_pair.second);
 	return counter_group_indices.size();
 }
@@ -1458,7 +1424,7 @@ auto ConjunctionsHeuristic::get_added_counter_groups_size(const FactSet &facts) 
 			continue;
 		const auto regression = compute_regression(*action, facts);
 		if (!counter_groups_by_regression.contains(regression))
-			optimized_added_counter_group_size += get_non_dominated_conjunctions(regression, conjunctions_containing_fact).size();
+			optimized_added_counter_group_size += get_non_dominated_conjunctions(regression, *conjunction_subset_generator).size();
 	}
 	for (const auto &counter_group : counter_groups)
 		if (std::includes(std::begin(counter_group.regression), std::end(counter_group.regression), std::begin(facts), std::end(facts)))
@@ -1550,10 +1516,13 @@ void ConjunctionsHeuristic::remove_all_conjunctions() {
 	for (auto novelty_heuristic : novelty_heuristics)
 		novelty_heuristic->remove_all_conjunctions();
 
-	// clear all non singletons from conjunctions_containing_fact
-	for (auto i = 0; i < static_cast<int>(g_variable_domain.size()); ++i)
-		for (auto j = 0; j < g_variable_domain[i]; ++j)
-			conjunctions_containing_fact[i][j].erase(std::begin(conjunctions_containing_fact[i][j]) + 1, std::end(conjunctions_containing_fact[i][j]));
+	// update the conjunction subset generator
+	for (auto non_singleton_conjunction_it = std::next(std::begin(conjunctions), num_singletons); non_singleton_conjunction_it != std::end(conjunctions);
+	     ++non_singleton_conjunction_it) {
+		auto &conjunction = **non_singleton_conjunction_it;
+		assert(conjunction.facts.size() > 1u);
+		conjunction_subset_generator->remove_conjunction(conjunction);
+	}
 
 	// clear regression_of
 	for (auto singleton_conjunction_it = std::begin(conjunctions); singleton_conjunction_it != std::begin(conjunctions) + num_singletons; ++singleton_conjunction_it)
@@ -1577,7 +1546,7 @@ void ConjunctionsHeuristic::remove_all_conjunctions() {
 			counter_group.regression_conjunctions.clear();
 			// ... and rebuild it as all singleton conjunctions in the regression
 			for (const auto &f : counter_group.regression) {
-				auto regression_singleton = conjunctions_containing_fact[f.var][f.value].front();
+				auto *regression_singleton = singleton_conjunctions[f.var][f.value];
 				counter_group.regression_conjunctions.push_back(regression_singleton);
 				regression_singleton->regression_of.push_back(counter_group_index);
 			}
@@ -1585,7 +1554,7 @@ void ConjunctionsHeuristic::remove_all_conjunctions() {
 		}
 
 #ifndef NDEBUG
-		auto expected_regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, conjunctions_containing_fact);
+		auto expected_regression_conjunctions = get_non_dominated_conjunctions(counter_group.regression, *conjunction_subset_generator);
 		auto actual_regression_conjunctions = counter_group.regression_conjunctions;
 		std::sort(std::begin(expected_regression_conjunctions), std::end(expected_regression_conjunctions));
 		std::sort(std::begin(actual_regression_conjunctions), std::end(actual_regression_conjunctions));
@@ -1636,11 +1605,8 @@ void ConjunctionsHeuristic::remove_conjunction(Conjunction *conjunction) {
 		novelty_heuristic->remove_conjunction(conjunction->facts);
 
 	conjunctions.erase(std::find(std::begin(conjunctions), std::end(conjunctions), conjunction));
+	conjunction_subset_generator->remove_conjunction(*conjunction);
 	conjunction_statistics.erase(conjunction);
-	for (const auto &f : conjunction->facts) {
-		auto &conjunctions_containing_f = conjunctions_containing_fact[f.var][f.value];
-		conjunctions_containing_f.erase(std::find(std::begin(conjunctions_containing_f), std::end(conjunctions_containing_f), conjunction));
-	}
 
 	// remove the conjunction from counter groups
 	auto removed_counter_groups = std::vector<CounterGroupIndex>();
@@ -1678,7 +1644,7 @@ void ConjunctionsHeuristic::remove_conjunction(Conjunction *conjunction) {
 		auto &regression_conjunctions = counter_groups[counter_group_index].regression_conjunctions;
 		assert(std::find(std::begin(regression_conjunctions), std::end(regression_conjunctions), conjunction) != std::end(regression_conjunctions));
 		regression_conjunctions.erase(std::find(std::begin(regression_conjunctions), std::end(regression_conjunctions), conjunction));
-		auto potential_regression_conjunctions = get_non_dominated_conjunctions(conjunction->facts, conjunctions_containing_fact);
+		auto potential_regression_conjunctions = get_non_dominated_conjunctions(conjunction->facts, *conjunction_subset_generator);
 		for (auto potential_regression_conjunction : potential_regression_conjunctions) {
 			auto dominates_conjunction = [potential_regression_conjunction](const Conjunction *other) {
 				return potential_regression_conjunction != other
@@ -1694,7 +1660,7 @@ void ConjunctionsHeuristic::remove_conjunction(Conjunction *conjunction) {
 			}
 		}
 #ifndef NDEBUG
-		auto expected_regression_conjunctions = get_non_dominated_conjunctions(counter_groups[counter_group_index].regression, conjunctions_containing_fact);
+		auto expected_regression_conjunctions = get_non_dominated_conjunctions(counter_groups[counter_group_index].regression, *conjunction_subset_generator);
 		std::sort(std::begin(expected_regression_conjunctions), std::end(expected_regression_conjunctions));
 		assert(std::is_sorted(std::begin(regression_conjunctions), std::end(regression_conjunctions)));
 		assert(expected_regression_conjunctions == regression_conjunctions || regression_conjunctions == std::vector<Conjunction *>{&dummy_precondition});
@@ -1718,7 +1684,7 @@ void ConjunctionsHeuristic::remove_conjunction(Conjunction *conjunction) {
 	auto check_counter_group = [this](CounterGroupIndex counter_group_index) {
 		auto &counter_group = counter_groups[counter_group_index];
 		for (const auto &counter_group_pair : counter_group.group) {
-			auto expected_regression_conjunctions = get_non_dominated_conjunctions(compute_regression(*counter_group_pair.first, counter_group_pair.second->facts), conjunctions_containing_fact);
+			auto expected_regression_conjunctions = get_non_dominated_conjunctions(compute_regression(*counter_group_pair.first, counter_group_pair.second->facts), *conjunction_subset_generator);
 			std::sort(std::begin(expected_regression_conjunctions), std::end(expected_regression_conjunctions));
 			assert(counter_group.regression_conjunctions == expected_regression_conjunctions);
 		}
@@ -1737,7 +1703,7 @@ void ConjunctionsHeuristic::remove_conjunction(Conjunction *conjunction) {
 		auto deleted_conjunction_pos = std::find(std::begin(non_dominated_goal_conjunctions), std::end(non_dominated_goal_conjunctions), conjunction);
 		if (deleted_conjunction_pos != std::end(non_dominated_goal_conjunctions)) {
 			non_dominated_goal_conjunctions.erase(deleted_conjunction_pos);
-			auto potential_goal_conjunctions = get_non_dominated_conjunctions(conjunction->facts, conjunctions_containing_fact);
+			auto potential_goal_conjunctions = get_non_dominated_conjunctions(conjunction->facts, *conjunction_subset_generator);
 			for (auto potential_goal_conjunction : potential_goal_conjunctions) {
 				auto dominates_conjunction = [potential_goal_conjunction](const Conjunction *other) {
 					return potential_goal_conjunction != other && std::includes(std::begin(other->facts), std::end(other->facts), std::begin(potential_goal_conjunction->facts), std::end(potential_goal_conjunction->facts));
@@ -1847,6 +1813,30 @@ void ConjunctionsHeuristic::remove_conjunctions_with_most_counters(int count, in
 	remove_conjunctions_by_score(count_counters, false, count, min_evaluations);
 }
 
+void ConjunctionsHeuristic::remove_least_useful_conjunctions_simple(int count, int min_evaluations) {
+	if (track_conjunction_usefulness == TrackConjunctionUsefulness::NONE) {
+		std::cerr << "Conjunction usefulness tracking must be enabled to use corresponding removal strategies." << std::endl;
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
+	}
+	auto usefulness = [this, min_evaluations](const auto conjunction) {
+		auto &statistics = conjunction_statistics[conjunction];
+		return statistics.evaluations < min_evaluations ? 1.0 : statistics.useful_simple / static_cast<double>(statistics.evaluations);
+	};
+	remove_conjunctions_by_score(usefulness, true, count, min_evaluations);
+}
+
+void ConjunctionsHeuristic::remove_least_useful_conjunctions_advanced(int count, int min_evaluations) {
+	if (track_conjunction_usefulness != TrackConjunctionUsefulness::ADVANCED) {
+		std::cerr << "Conjunction usefulness tracking must be set to advanced to use corresponding removal strategies." << std::endl;
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
+	}
+	auto usefulness = [this, min_evaluations](const auto conjunction) {
+		auto &statistics = conjunction_statistics[conjunction];
+		return statistics.evaluations < min_evaluations ? 1.0 : statistics.useful_advanced / static_cast<double>(statistics.evaluations);
+	};
+	remove_conjunctions_by_score(usefulness, true, count, min_evaluations);
+}
+
 
 // output and debug stuff
 
@@ -1862,7 +1852,7 @@ auto operator<<(std::ostream &out, const ConjunctionsHeuristic::BestSupporterFun
 		return out << "h^Cmax (greedy implementation)";
 	default: {
 		std::cout << "Unknown best supporter function option: " << bs << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 	}
 }
@@ -1883,11 +1873,10 @@ auto operator<<(std::ostream &out, const ConjunctionsHeuristic::TieBreaking tb) 
 		return out << "CONFLICTS";
 	default: {
 		std::cout << "Unknown tie breaking option: " << tb << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 	}
 }
-
 
 // FD plugin stuff and command line options
 
@@ -1895,6 +1884,8 @@ void ConjunctionsHeuristic::add_common_options(options::OptionParser &parser) {
 	parser.add_option<std::shared_ptr<ConjunctionGenerationStrategy>>("strategy", "Conjunction generation strategy to be used. Local minima are not tracked. "
 		"This option should only be used if the conjunction is used in a standard search algorithm. Consider using a search algorithm specialized for conjunctions instead.",
 		options::OptionParser::NONE);
+	parser.add_enum_option("track_conjunction_usefulness", {"NONE", "SIMPLE", "ADVANCED"},
+	                       "enable conjunction usefulness tracking (required to use removal strategies based on conjunction usefulness)", "NONE");
 }
 
 void ConjunctionsHeuristic::set_hc_options(options::Options &opts) {

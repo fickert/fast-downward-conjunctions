@@ -105,7 +105,74 @@ void CausalGraph::weigh_graph_from_axioms(const vector<Variable *> &,
     }
 }
 
+// This method is called after deriving mutexes and unreachable facts.
+// It performs the following steps:
+// 1) Remove unneccessary variables
+// 2) Reconstruct causal graph with new variables and operators
+// 3) Calculate important vars
+void CausalGraph::update() {
+    cout << "Updating causal graph and pruning unnecessary facts" << endl;
 
+    // 1) Remove unneccessary variables and
+    // change ordering to leave out unimportant vars
+    vector<Variable *> new_ordering;
+    int old_size = ordering.size();
+    for (int i = 0; i < old_size; i++) {
+        if (ordering[i]->is_necessary() || g_do_not_prune_variables) {
+            new_ordering.push_back(ordering[i]);
+            ordering[i]->remove_unreachable_facts();
+        }
+    }
+
+    ordering = new_ordering;
+    for (size_t i = 0; i < ordering.size(); i++) {
+        ordering[i]->set_level(i);
+    }
+    cout << ordering.size() << " variables of " << old_size << " of " << variables.size() << " necessary" << endl;
+
+    // 2) Reconstruct causal graph with new variables and operators
+
+  predecessor_graph.clear();
+    weighted_graph.clear();
+    for (Variable *variable : ordering) {
+        weighted_graph[variable] = WeightedSuccessors();
+    }
+    weigh_graph_from_ops(ordering, operators, goals);
+    weigh_graph_from_axioms(ordering, axioms, goals);
+
+
+    //dump();
+
+    Partition sccs;
+    get_strongly_connected_components(ordering, sccs);
+
+    cout << "The causal graph is "
+         << (sccs.size() == ordering.size() ? "" : "not ")
+         << "acyclic." << endl;
+    /*
+      if (sccs.size() != variables.size()) {
+      cout << "Components: " << endl;
+      for(int i = 0; i < sccs.size(); i++) {
+      for(int j = 0; j < sccs[i].size(); j++)
+      cout << " " << sccs[i][j]->get_name();
+      cout << endl;
+      }
+      }
+    */
+
+
+  vector<Variable *>().swap(ordering);
+  calculate_topological_pseudo_sort(sccs);
+  calculate_important_vars(); 
+    //Put -1 to every variable to remove variables that are not in ordering
+    for (Variable *var : variables) {
+        var->set_level(-1);
+    }
+    //Put right level to each variable
+    for (size_t i = 0; i < ordering.size(); i++) {
+        ordering[i]->set_level(i);
+    }
+}
 CausalGraph::CausalGraph(const vector<Variable *> &the_variables,
                          const vector<Operator> &the_operators,
                          const vector<Axiom> &the_axioms,
@@ -120,7 +187,7 @@ CausalGraph::CausalGraph(const vector<Variable *> &the_variables,
     //dump();
 
     Partition sccs;
-    get_strongly_connected_components(sccs);
+    get_strongly_connected_components(variables, sccs);
 
     cout << "The causal graph is "
          << (sccs.size() == variables.size() ? "" : "not ")
@@ -135,13 +202,18 @@ CausalGraph::CausalGraph(const vector<Variable *> &the_variables,
       }
     }
     */
+
     calculate_topological_pseudo_sort(sccs);
     calculate_important_vars();
 
-    // cout << "new variable order: ";
-    // for(int i = 0; i < ordering.size(); i++)
-    //   cout << ordering[i]->get_name()<<" - ";
-    // cout << endl;
+    //Put -1 to every variable to remove variables that are not in ordering
+    for (Variable *var : variables) {
+        var->set_level(-1);
+    }
+    //Put right level to each variable
+    for (size_t i = 0; i < ordering.size(); i++) {
+        ordering[i]->set_level(i);
+    }
 }
 
 void CausalGraph::calculate_topological_pseudo_sort(const Partition &sccs) {
@@ -193,14 +265,14 @@ void CausalGraph::calculate_topological_pseudo_sort(const Partition &sccs) {
     }
 }
 
-void CausalGraph::get_strongly_connected_components(Partition &result) {
+void CausalGraph::get_strongly_connected_components(const vector <Variable *> &vars, Partition &result) {
     map<Variable *, int> variableToIndex;
-    int num_vars = variables.size();
+    int num_vars = vars.size();
     for (int i = 0; i < num_vars; i++)
-        variableToIndex[variables[i]] = i;
+        variableToIndex[vars[i]] = i;
 
     vector<vector<int>> unweighted_graph;
-    unweighted_graph.resize(variables.size());
+    unweighted_graph.resize(vars.size());
     for (const auto &weighted_node : weighted_graph) {
         int index = variableToIndex[weighted_node.first];
         vector<int> &succ = unweighted_graph[index];
@@ -215,15 +287,17 @@ void CausalGraph::get_strongly_connected_components(Partition &result) {
     for (const auto &int_component : int_result) {
         vector<Variable *> component;
         for (int var_id : int_component)
-            component.push_back(variables[var_id]);
+            component.push_back(vars[var_id]);
         result.push_back(component);
     }
 }
 void CausalGraph::calculate_important_vars() {
+    for (auto var : ordering){
+        var->reset_necessary();
+}
+
     for (const auto &goal : goals) {
         if (!goal.first->is_necessary()) {
-            //cout << "var " << goals[i].first->get_name() <<" is directly neccessary."
-            // << endl;
             goal.first->set_necessary();
             dfs(goal.first);
         }
@@ -281,6 +355,8 @@ const {
     //TODO: use const iterator!
     vector<WeightedSuccessors *> succs; // will be ordered like ordered_vars
     vector<int> number_of_succ; // will be ordered like ordered_vars
+	//cout << "Number of vars: " << ordered_vars.size() << endl;
+    //cout << "weighted " << weighted_graph.size() << endl;
     succs.resize(ordered_vars.size());
     number_of_succ.resize(ordered_vars.size());
     for (const auto &source : weighted_graph) {

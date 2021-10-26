@@ -37,6 +37,7 @@ EnforcedHillClimbingSearch::EnforcedHillClimbingSearch(const options::Options &o
 	bfs_lowest_h_value(std::numeric_limits<int>::max()),
 	solved(false),
 	k_cutoff(false),
+	sse_backjumping(false),
 	no_learning(opts.get<bool>("no_learning")),
 	restart_in_dead_ends(opts.get<bool>("restart_in_dead_ends")),
 	always_reevaluate(opts.get<bool>("always_reevaluate")),
@@ -121,7 +122,7 @@ void EnforcedHillClimbingSearch::initialize() {
 	if (dead_end) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
 		assert(heuristic->dead_ends_are_reliable());
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 
 	assert(heuristic->is_last_bsg_valid_for_state(current_eval_context.get_state()));
@@ -234,7 +235,7 @@ SearchStatus EnforcedHillClimbingSearch::ehc(SearchSpace &current_search_space) 
 		break;
 	default:
 		std::cerr << "Unknown learning result." << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	auto dead_end_unsafe = false;
@@ -299,6 +300,7 @@ SearchStatus EnforcedHillClimbingSearch::ehc(SearchSpace &current_search_space) 
 			}
 
 			if (h < current_eval_context.get_heuristic_value(heuristic) || (h == 0 && test_goal(eval_context.get_state()))) {
+				sse_backjumping = false;
 				learning_stagnation_counter = 0;
 				current_unsafe_dead_ends.clear();
 				bfs_lowest_h_value = std::numeric_limits<int>::max();
@@ -342,6 +344,10 @@ SearchStatus EnforcedHillClimbingSearch::ehc(SearchSpace &current_search_space) 
 		return handle_search_space_exhaustion();
 	if (!current_unsafe_dead_ends.empty() && !k_cutoff)
 		return escape_potential_dead_end();
+	// if we're currently backjumping from search space exhaustion and the search space exhausted again, continue backjumping
+	if (!k_cutoff && sse_backjumping)
+		return escape_potential_dead_end();
+	sse_backjumping = false;
 	current_unsafe_dead_ends.clear();
 	ehcc_statistics.num_expansions_in_ehc_phases_with_refinement += num_expansions_this_ehc_phase;
 	return escape_local_minimum();
@@ -401,7 +407,8 @@ auto EnforcedHillClimbingSearch::escape_local_minimum() -> SearchStatus {
 	if (learning_stagnation_counter > 0)
 		++ehcc_statistics.num_no_better_state_after_learning;
 
-	if (learning_stagnation_counter >= learning_stagnation_threshold) {
+	// don't check for learning stagnation if we are going to restart/backjump due to search space exhaustion
+	if (!(!k_cutoff && search_space_exhaustion != SearchSpaceExhaustion::CONTINUE) && learning_stagnation_counter >= learning_stagnation_threshold) {
 		// learning is called in the same phase/state as the last time, i.e. we could not find a better state after improving the heuristic
 		if (unsafe_pruning_ls && !force_unsafe_pruning_complete) {
 			if (current_eval_context.get_state().get_id() == state_registry.get_initial_state().get_id())
@@ -456,7 +463,7 @@ auto EnforcedHillClimbingSearch::escape_local_minimum() -> SearchStatus {
 				// fail if we arrived in this state more than once without making progress
 				return FAILED;
 		}
-		if (!k_cutoff)
+		if (!k_cutoff && search_space_exhaustion != SearchSpaceExhaustion::CONTINUE)
 			return handle_search_space_exhaustion();
 		if (learning_result == ConjunctionGenerationStrategy::Result::SOLVED)
 			break;
@@ -471,7 +478,7 @@ auto EnforcedHillClimbingSearch::handle_safe_dead_end() -> SearchStatus {
 	node.mark_as_dead_end();
 	statistics.inc_dead_ends();
 	if (!current_unsafe_dead_ends.empty()) {
-		for (const auto state_id : current_unsafe_dead_ends) {
+		for (const auto &state_id : current_unsafe_dead_ends) {
 			auto unsafe_dead_end_node = search_space.get_node(state_registry.lookup_state(state_id));
 			assert(!unsafe_dead_end_node.is_dead_end());
 			unsafe_dead_end_node.mark_as_dead_end();
@@ -481,7 +488,7 @@ auto EnforcedHillClimbingSearch::handle_safe_dead_end() -> SearchStatus {
 	}
 	if (node.get_state_id() == state_registry.get_initial_state().get_id()) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	if (restart_in_dead_ends)
 		return restart();
@@ -509,12 +516,15 @@ auto EnforcedHillClimbingSearch::handle_search_space_exhaustion() -> SearchStatu
 			return search_space_exhaustion == SearchSpaceExhaustion::RESTART ? restart() : escape_dead_end(node);
 		}
 	}
+	if (search_space_exhaustion == SearchSpaceExhaustion::BACKJUMP)
+		sse_backjumping = true;
 	return search_space_exhaustion == SearchSpaceExhaustion::RESTART ? restart() : escape_potential_dead_end();
 }
 
 auto EnforcedHillClimbingSearch::escape_dead_end(const SearchNode &node) -> SearchStatus {
 	++ehcc_statistics.total_dead_end_backjump_length;
 	assert(node.is_dead_end());
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	const auto parent_id = node.get_parent_state_id();
 	if (parent_id == StateID::no_state) {
@@ -522,7 +532,7 @@ auto EnforcedHillClimbingSearch::escape_dead_end(const SearchNode &node) -> Sear
 			// when using unsafe pruning without preserving completeness, we don't know for sure if the task is unsolvable
 			return FAILED;
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	current_eval_context = EvaluationContext(state_registry.lookup_state(parent_id), &statistics);
 	auto parent_node = search_space.get_node(current_eval_context.get_state());
@@ -544,6 +554,7 @@ auto EnforcedHillClimbingSearch::escape_potential_dead_end() -> SearchStatus {
 	if (parent_id == StateID::no_state) {
 		current_unsafe_dead_ends.clear();
 		unsafe_dead_ends.clear();
+		sse_backjumping = false;
 		return IN_PROGRESS;
 	}
 	current_eval_context = EvaluationContext(state_registry.lookup_state(parent_id), &statistics);
@@ -558,13 +569,14 @@ auto EnforcedHillClimbingSearch::escape_potential_dead_end() -> SearchStatus {
 }
 
 auto EnforcedHillClimbingSearch::restart() -> SearchStatus {
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	current_eval_context = EvaluationContext(state_registry.get_initial_state(), &statistics);
 	current_real_g = 0;
 	auto h = evaluate_if_neccessary(current_eval_context);
 	if (h == EvaluationResult::INFTY) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	assert(!enable_heuristic_cache || heuristic_cache.find(current_eval_context.get_state().get_id()) != std::end(heuristic_cache));
 	return IN_PROGRESS;
@@ -572,6 +584,7 @@ auto EnforcedHillClimbingSearch::restart() -> SearchStatus {
 
 auto EnforcedHillClimbingSearch::restart_in_parent() -> SearchStatus {
 	assert(current_eval_context.get_state().get_id() != state_registry.get_initial_state().get_id());
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	auto node = search_space.get_node(current_eval_context.get_state());
 	excluded_states.insert(node.get_state_id());

@@ -94,17 +94,17 @@ public:
 
 	virtual auto get_last_subgoals_and_costs() const -> std::vector<std::pair<FactPair, int>> {
 		std::cerr << "get_last_subgoals_and_costs() not implemented!" << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
     virtual auto get_last_relaxed_plan() const -> std::vector<const GlobalOperator *> {
         std::cerr << "get_last_relaxed_plan() not implemented!" << std::endl;
-        utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+        utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
     }
 
 	virtual auto get_cost(const FactPair &) const -> int {
         std::cerr << "get_cost() not implemented!" << std::endl;
-        utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+        utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	virtual void initialize_if_necessary(StateRegistry &) {}
@@ -112,7 +112,7 @@ public:
 	virtual auto found_solution() const -> bool { return false; }
 	virtual auto get_solution() const -> std::vector<const GlobalOperator *> {
 		std::cerr << "get_solution() not implemented!" << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
     std::string get_description() const;

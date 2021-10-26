@@ -1,2 +1,6 @@
 builds/
 *.pyc
+
+/output.sas
+/sas_plan
+/sas_plan.*

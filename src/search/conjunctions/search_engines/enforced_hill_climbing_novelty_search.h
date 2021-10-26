@@ -46,6 +46,8 @@ protected:
 	SearchStatus step() override;
 
 private:
+	auto get_evaluators(int w, bool include_pref_eval) -> std::vector<ScalarEvaluator *>;
+
 	auto get_successors(EvaluationContext &eval_context) -> std::vector<const GlobalOperator *>;
 	void expand(EvaluationContext &eval_context, SearchSpace &current_search_space);
 	void reach_state(const GlobalState &parent, const GlobalOperator &op, const GlobalState &state);
@@ -141,6 +143,8 @@ private:
 	bool solved;
 
 	bool bfs_cutoff;
+
+	bool sse_backjumping;
 
 	// settings
 	const bool no_learning;

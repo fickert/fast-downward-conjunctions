@@ -43,7 +43,7 @@ auto SubgoalHeuristic::aggregate(int value, int cost) const -> int {
 		return value + cost;
 	default:
 		std::cerr << "unknown subgoal aggregation method: " << static_cast<int>(subgoal_aggregation_method) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 

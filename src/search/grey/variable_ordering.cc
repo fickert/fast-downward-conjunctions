@@ -119,6 +119,7 @@ public:
     const bool c_reverse;
     cg(bool reverse) : variable_iterator(),
         i(0), c_reverse(reverse) {}
+    ~cg() override = default;
     virtual void initialize()
     {
         std::vector<int> stack;

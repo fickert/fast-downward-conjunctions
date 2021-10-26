@@ -41,7 +41,7 @@ auto ConjunctionsSubgoalHeuristic::aggregate(int value, size_t index) -> int {
 		return value + cost[index];
 	default:
 		std::cerr << "unknown subgoal aggregation method: " << static_cast<int>(subgoal_aggregation_method) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -84,7 +84,7 @@ auto ConjunctionsSubgoalHeuristic::compute_result(const StateID &parent_state_id
 
 auto ConjunctionsSubgoalHeuristic::get_preferred_ops(const std::vector<const GlobalOperator *> &) -> std::vector<const GlobalOperator *> {
 	std::cerr << "preferred operators not implemented for subgoal heuristic" << std::endl;
-	utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 }
 
 }

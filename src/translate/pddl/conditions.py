@@ -1,13 +1,10 @@
-from __future__ import print_function
-
-
 # Conditions (of any type) are immutable, because they need to
 # be hashed occasionally. Immutability also allows more efficient comparison
 # based on a precomputed hash value.
 #
 # Careful: Most other classes (e.g. Effects, Axioms, Actions) are not!
 
-class Condition(object):
+class Condition:
     def __init__(self, parts):
         self.parts = tuple(parts)
         self.hash = hash((self.__class__, self.parts))
@@ -222,6 +219,7 @@ class Literal(Condition):
     # Defining __eq__ blocks inheritance of __hash__, so must set it explicitly.
     __hash__ = Condition.__hash__
     parts = []
+    __slots__ = ["predicate", "args", "hash"]
     def __init__(self, predicate, args):
         self.predicate = predicate
         self.args = tuple(args)
@@ -260,7 +258,7 @@ class Literal(Condition):
         new_args[position] = new_arg
         return self.__class__(self.predicate, new_args)
     def free_variables(self):
-        return set(arg for arg in self.args if arg[0] == "?")
+        return {arg for arg in self.args if arg[0] == "?"}
 
 class Atom(Literal):
     negated = False

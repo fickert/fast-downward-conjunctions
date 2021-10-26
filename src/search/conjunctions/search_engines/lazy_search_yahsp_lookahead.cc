@@ -336,6 +336,7 @@ SearchStatus LazySearchYAHSPLookahead::step() {
 
 			assert(conjunctions_heuristic->is_last_bsg_valid_for_state(current_eval_context.get_state()));
 			lookahead_statistics.lookahead_timer.resume();
+			++lookahead_statistics.num_lookahead;
 			const auto [lookahead_state, lookahead_plan] = yahsp_lookahead->lookahead(current_eval_context, *conjunctions_heuristic, state_registry, *g_successor_generator);
 			lookahead_statistics.lookahead_timer.stop();
 			assert(!lookahead_plan.empty()); // at least one action should be applicable

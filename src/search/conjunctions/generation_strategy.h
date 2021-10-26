@@ -48,6 +48,8 @@ public:
 		return false;
 	}
 
+	virtual void print_statistics() const {};
+
 	virtual void dump_options() const = 0;
 
 protected:
@@ -75,6 +77,7 @@ public:
 	virtual ~ConflictExtractionStrategy();
 
 	void dump_options() const override;
+	void print_statistics() const override;
 	static void add_options(options::OptionParser &);
 
 protected:
@@ -104,6 +107,7 @@ protected:
 	const double conjunction_growth_bound;
 	const double counter_growth_bound;
 	const double counter_sum_growth_bound;
+	const int max_num_conjunctions;
 	const int learning_time;
 };
 
@@ -171,7 +175,9 @@ enum class RemovalStrategy {
 	LEAST_FREQUENTLY_IN_RELAXED_PLANS,
 	LEAST_EFFICIENT,
 	MOST_COUNTERS,
-	RANDOM
+	RANDOM,
+	LEAST_USEFUL_SIMPLE,
+	LEAST_USEFUL_ADVANCED
 };
 
 auto operator<<(std::ostream &, const RemovalStrategy) -> std::ostream &;

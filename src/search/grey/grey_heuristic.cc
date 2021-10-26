@@ -1736,7 +1736,7 @@ void GreyHeuristic::set_black_variables_DAG_from_SCC() {
 				}
 			} else {
 				cout << "Should not end up here!";
-				exit_with(ExitCode::CRITICAL_ERROR);
+				exit_with(ExitCode::SEARCH_CRITICAL_ERROR);
 			}
 		}
 	}
@@ -3735,7 +3735,7 @@ int GreyHeuristic::get_next_action_reg(bool skip_black_pre_may_delete_red_suffic
 			return -1;
 		}
 		cout << "Should be at least one element!! Bug!" << endl;
-		exit_with(ExitCode::CRITICAL_ERROR);
+		exit_with(ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 #ifdef DEBUG_GREY

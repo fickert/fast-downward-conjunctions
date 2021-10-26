@@ -35,7 +35,7 @@ class CausalGraph {
     void weigh_graph_from_axioms(const vector<Variable *> &variables,
                                  const vector<Axiom> &axioms,
                                  const vector<pair<Variable *, int>> &goals);
-    void get_strongly_connected_components(Partition &sccs);
+    void get_strongly_connected_components(const vector<Variable *> &variables, Partition &sccs);
     void calculate_topological_pseudo_sort(const Partition &sccs);
     void calculate_important_vars();
     void dfs(Variable *from);
@@ -50,6 +50,7 @@ public:
     void dump() const;
     void generate_cpp_input(ofstream &outfile,
                             const vector<Variable *> &ordered_vars) const;
+    void update();
 };
 
 extern bool g_do_not_prune_variables;

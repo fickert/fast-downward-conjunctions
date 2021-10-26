@@ -24,8 +24,7 @@ struct UnaryOperator {
               // includes operator cost (base_cost)
     UnaryOperator(const std::vector<Proposition *> &pre, Proposition *eff,
                   int operator_no_, int base)
-        : operator_no(operator_no_), precondition(pre), effect(eff),
-          base_cost(base) {}
+        : operator_no(operator_no_), precondition(pre), effect(eff), base_cost(base), unsatisfied_preconditions(0), cost(0) {}
 };
 
 struct Proposition {

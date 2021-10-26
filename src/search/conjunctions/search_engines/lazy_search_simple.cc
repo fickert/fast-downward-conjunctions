@@ -171,7 +171,7 @@ void LazySearchSimple::generate_successors() {
 		break;
 	default:
 		std::cerr << "Unknown PO sequence option: " << static_cast<int>(rp_sequence) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	auto operators = std::vector<const GlobalOperator *>();

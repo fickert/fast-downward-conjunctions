@@ -9,6 +9,8 @@
 
 #include "../evaluators/g_evaluator.h"
 #include "../evaluators/pref_evaluator.h"
+#include "../evaluators/sum_evaluator.h"
+#include "../evaluators/weighted_evaluator.h"
 
 #include "../open_lists/standard_scalar_open_list.h"
 #include "../open_lists/tiebreaking_open_list.h"
@@ -40,6 +42,7 @@ EnforcedHillClimbingNoveltySearch::EnforcedHillClimbingNoveltySearch(const optio
 	bfs_lowest_h_value(std::numeric_limits<int>::max()),
 	solved(false),
 	bfs_cutoff(false),
+	sse_backjumping(false),
 	no_learning(opts.get<bool>("no_learning")),
 	restart_in_dead_ends(opts.get<bool>("restart_in_dead_ends")),
 	always_reevaluate(opts.get<bool>("always_reevaluate")),
@@ -63,17 +66,15 @@ EnforcedHillClimbingNoveltySearch::EnforcedHillClimbingNoveltySearch(const optio
 	for (auto heuristic : heuristics)
 		heuristic->notify_initial_state(initial_state);
 	use_preferred = std::find(preferred_operator_heuristics.begin(), preferred_operator_heuristics.end(), heuristic) != preferred_operator_heuristics.end();
-	auto g_evaluator = static_cast<ScalarEvaluator *>(new g_evaluator::GEvaluator());
 	if (!use_preferred || preferred_usage == PreferredUsage::PRUNE_BY_PREFERRED) {
 		Options options;
-		options.set("evals", std::vector<ScalarEvaluator *>{g_evaluator, heuristic});
+		options.set("evals", get_evaluators(opts.get<int>("w"), false));
 		options.set("pref_only", false);
 		options.set("unsafe_pruning", true);
 		open_list = TieBreakingOpenListFactory(options).create_edge_open_list();
 	} else {
-		auto evals = std::vector<ScalarEvaluator *>{g_evaluator, new pref_evaluator::PrefEvaluator(), heuristic};
 		Options options;
-		options.set("evals", evals);
+		options.set("evals", get_evaluators(opts.get<int>("w"), true));
 		options.set("pref_only", false);
 		options.set("unsafe_pruning", true);
 		open_list = TieBreakingOpenListFactory(options).create_edge_open_list();
@@ -87,6 +88,28 @@ EnforcedHillClimbingNoveltySearch::EnforcedHillClimbingNoveltySearch(const optio
 
 EnforcedHillClimbingNoveltySearch::~EnforcedHillClimbingNoveltySearch() {}
 
+auto EnforcedHillClimbingNoveltySearch::get_evaluators(int w, bool include_pref_eval) -> std::vector<ScalarEvaluator *> {
+	auto g_evaluator = static_cast<ScalarEvaluator *>(new g_evaluator::GEvaluator());
+	auto evals = std::vector<ScalarEvaluator *>();
+	// use g (w=0), h (w=infinity), or g + w * h as the main evaluator
+	if (w == 0) {
+		evals.push_back(g_evaluator);
+	} else if (w == std::numeric_limits<int>::max()) {
+		evals.push_back(heuristic);
+	} else {
+		auto weighted_evaluator = new weighted_evaluator::WeightedEvaluator(heuristic, w);
+		auto sum_evals = std::vector<ScalarEvaluator *>{weighted_evaluator, g_evaluator};
+		auto sum_evaluator = new sum_evaluator::SumEvaluator(sum_evals);
+		evals.push_back(sum_evaluator);
+	}
+	if (include_pref_eval)
+		evals.push_back(new pref_evaluator::PrefEvaluator());
+	// if w is not infinite, add h as last tie breaker (otherwise h is already the main evaluator)
+	if (w != std::numeric_limits<int>::max())
+		evals.push_back(heuristic);
+	return evals;
+}
+
 void EnforcedHillClimbingNoveltySearch::reach_state(const GlobalState &parent, const GlobalOperator &op, const GlobalState &state) {
 	for (auto heur : heuristics)
 		heur->notify_state_transition(parent, op, state);
@@ -99,7 +122,7 @@ void EnforcedHillClimbingNoveltySearch::initialize() {
 	if (use_preferred)
 		std::cout << "Using preferred operators for " << (preferred_usage == PreferredUsage::RANK_PREFERRED_FIRST ? "ranking successors" : "pruning") << std::endl;
 
-	std::cout << "Breadth first search depth bound: " << bfs_bound << std::endl;
+	std::cout << "Lookahead search depth bound: " << bfs_bound << std::endl;
 	std::cout << "Always reevaluate the local minimum neighborhood after adding a conjunction: " << always_reevaluate << std::endl;
 	std::cout << "Cache the heuristic results of known states: " << enable_heuristic_cache << std::endl;
 	conjunctions_strategy->dump_options();
@@ -125,7 +148,7 @@ void EnforcedHillClimbingNoveltySearch::initialize() {
 	if (dead_end) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
 		assert(heuristic->dead_ends_are_reliable());
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 
 	assert(heuristic->is_last_bsg_valid_for_state(current_eval_context.get_state()));
@@ -238,13 +261,13 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 		break;
 	default:
 		std::cerr << "Unknown learning result." << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	novelty_heuristic->reset();
 	if (current_eval_context.get_heuristic_value(novelty_heuristic) == 1) {
 		assert(false && "should be unreachable");
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	auto dead_end_unsafe = false;
@@ -327,6 +350,7 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 			}
 
 			if (h < current_eval_context.get_heuristic_value(heuristic) || (h == 0 && test_goal(eval_context.get_state()))) {
+				sse_backjumping = false;
 				learning_stagnation_counter = 0;
 				current_unsafe_dead_ends.clear();
 				bfs_lowest_h_value = std::numeric_limits<int>::max();
@@ -370,6 +394,10 @@ SearchStatus EnforcedHillClimbingNoveltySearch::ehc(SearchSpace &current_search_
 		return handle_search_space_exhaustion();
 	if (!current_unsafe_dead_ends.empty() && !bfs_cutoff)
 		return escape_potential_dead_end();
+	// if we're currently backjumping from search space exhaustion and the search space exhausted again, continue backjumping
+	if (!bfs_cutoff && sse_backjumping)
+		return escape_potential_dead_end();
+	sse_backjumping = false;
 	current_unsafe_dead_ends.clear();
 	ehcc_statistics.num_expansions_in_ehc_phases_with_refinement += num_expansions_this_ehc_phase;
 	return escape_local_minimum();
@@ -429,7 +457,8 @@ auto EnforcedHillClimbingNoveltySearch::escape_local_minimum() -> SearchStatus {
 	if (learning_stagnation_counter > 0)
 		++ehcc_statistics.num_no_better_state_after_learning;
 
-	if (learning_stagnation_counter >= learning_stagnation_threshold) {
+	// don't check for learning stagnation if we are going to restart/backjump due to search space exhaustion
+	if (!(!bfs_cutoff && search_space_exhaustion != SearchSpaceExhaustion::CONTINUE) && learning_stagnation_counter >= learning_stagnation_threshold) {
 		// learning is called in the same phase/state as the last time, i.e. we could not find a better state after improving the heuristic
 		if (unsafe_pruning_ls && !force_unsafe_pruning_complete) {
 			if (current_eval_context.get_state().get_id() == state_registry.get_initial_state().get_id())
@@ -484,7 +513,7 @@ auto EnforcedHillClimbingNoveltySearch::escape_local_minimum() -> SearchStatus {
 				// fail if we arrived in this state more than once without making progress
 				return FAILED;
 		}
-		if (!bfs_cutoff)
+		if (!bfs_cutoff && search_space_exhaustion != SearchSpaceExhaustion::CONTINUE)
 			return handle_search_space_exhaustion();
 		if (learning_result == ConjunctionGenerationStrategy::Result::SOLVED)
 			break;
@@ -499,7 +528,7 @@ auto EnforcedHillClimbingNoveltySearch::handle_safe_dead_end() -> SearchStatus {
 	node.mark_as_dead_end();
 	statistics.inc_dead_ends();
 	if (!current_unsafe_dead_ends.empty()) {
-		for (const auto state_id : current_unsafe_dead_ends) {
+		for (const auto &state_id : current_unsafe_dead_ends) {
 			auto unsafe_dead_end_node = search_space.get_node(state_registry.lookup_state(state_id));
 			assert(!unsafe_dead_end_node.is_dead_end());
 			unsafe_dead_end_node.mark_as_dead_end();
@@ -509,7 +538,7 @@ auto EnforcedHillClimbingNoveltySearch::handle_safe_dead_end() -> SearchStatus {
 	}
 	if (node.get_state_id() == state_registry.get_initial_state().get_id()) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	if (restart_in_dead_ends)
 		return restart();
@@ -537,12 +566,15 @@ auto EnforcedHillClimbingNoveltySearch::handle_search_space_exhaustion() -> Sear
 			return search_space_exhaustion == SearchSpaceExhaustion::RESTART ? restart() : escape_dead_end(node);
 		}
 	}
+	if (search_space_exhaustion == SearchSpaceExhaustion::BACKJUMP)
+		sse_backjumping = true;
 	return search_space_exhaustion == SearchSpaceExhaustion::RESTART ? restart() : escape_potential_dead_end();
 }
 
 auto EnforcedHillClimbingNoveltySearch::escape_dead_end(const SearchNode &node) -> SearchStatus {
 	++ehcc_statistics.total_dead_end_backjump_length;
 	assert(node.is_dead_end());
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	const auto parent_id = node.get_parent_state_id();
 	if (parent_id == StateID::no_state) {
@@ -550,7 +582,7 @@ auto EnforcedHillClimbingNoveltySearch::escape_dead_end(const SearchNode &node) 
 			// when using unsafe pruning without preserving completeness, we don't know for sure if the task is unsolvable
 			return FAILED;
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	current_eval_context = EvaluationContext(state_registry.lookup_state(parent_id), &statistics);
 	auto parent_node = search_space.get_node(current_eval_context.get_state());
@@ -572,6 +604,7 @@ auto EnforcedHillClimbingNoveltySearch::escape_potential_dead_end() -> SearchSta
 	if (parent_id == StateID::no_state) {
 		current_unsafe_dead_ends.clear();
 		unsafe_dead_ends.clear();
+		sse_backjumping = false;
 		return IN_PROGRESS;
 	}
 	current_eval_context = EvaluationContext(state_registry.lookup_state(parent_id), &statistics);
@@ -586,13 +619,14 @@ auto EnforcedHillClimbingNoveltySearch::escape_potential_dead_end() -> SearchSta
 }
 
 auto EnforcedHillClimbingNoveltySearch::restart() -> SearchStatus {
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	current_eval_context = EvaluationContext(state_registry.get_initial_state(), &statistics);
 	current_real_g = 0;
 	auto h = evaluate_if_neccessary(current_eval_context);
 	if (h == EvaluationResult::INFTY) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	assert(!enable_heuristic_cache || heuristic_cache.find(current_eval_context.get_state().get_id()) != std::end(heuristic_cache));
 	return IN_PROGRESS;
@@ -600,6 +634,7 @@ auto EnforcedHillClimbingNoveltySearch::restart() -> SearchStatus {
 
 auto EnforcedHillClimbingNoveltySearch::restart_in_parent() -> SearchStatus {
 	assert(current_eval_context.get_state().get_id() != state_registry.get_initial_state().get_id());
+	sse_backjumping = false;
 	learning_stagnation_counter = 0;
 	auto node = search_space.get_node(current_eval_context.get_state());
 	excluded_states.insert(node.get_state_id());
@@ -662,7 +697,7 @@ static auto _parse(OptionParser &parser) -> SearchEngine * {
 		"otherwise just go back to the last state along the path that is not the current state and does not have heuristic value infinity. This can happen in two ways: "
 		"1. Without learning, the entire local search space is exhausted around the current best state. "
 		"2. The current best state might have heuristic value infinity after learning new conjunctions.", "true");
-	parser.add_option<int>("bfs_bound", "lookahead bound for breadth first search", "infinity");
+	parser.add_option<int>("bfs_bound", "lookahead search depth bound", "infinity");
 	parser.add_option<bool>("always_reevaluate", "always reevaluate the local minimum neighborhood after adding a conjunction", "false");
 	parser.add_option<bool>("enable_heuristic_cache", "buffer the heuristic results of known states", "true");
 	parser.add_option<bool>("randomize_successors", "randomize successors before inserting them into the open list", "true");
@@ -682,6 +717,7 @@ static auto _parse(OptionParser &parser) -> SearchEngine * {
 	parser.add_option<bool>("force_unsafe_pruning_complete", "enforce completeness when using unsafe pruning", "false");
 	parser.add_option<double>("max_growth", "fail when reaching this growth bound in the heuristic", "infinity");
 	parser.add_list_option<Heuristic *>("preferred", "use preferred operators of these heuristics", "[]");
+	parser.add_option<int>("w", "heuristic weight", "0", Bounds("0", "infinity"));
 	OnlineLearningSearchEngine::add_options_to_parser(parser);
 	SearchEngine::add_options_to_parser(parser);
 	auto opts = parser.parse();

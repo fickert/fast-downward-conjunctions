@@ -4,6 +4,7 @@
 #include <numeric>
 
 #include "conjunctions.h"
+#include "conjunctions_subset_generator.h"
 #include "../task_tools.h"
 #include "../utils/timer.h"
 
@@ -103,19 +104,8 @@ inline auto get_edeleted_facts(const AbstractTask &task, const BSGNode &bsg_node
 	return get_edeleted_facts(task, bsg_node, conjunction->facts);
 }
 
-inline auto get_all_conjunctions(const FactSet &facts, const std::vector<std::vector<std::vector<Conjunction *>>> &conjunctions_containing_fact) -> std::vector<Conjunction *> {
-	auto conjunctions_from_fact_set = std::vector<Conjunction *>();
-	// avoid doing too many memory allocations
-	conjunctions_from_fact_set.reserve(64);
-	for (const auto &fact : facts)
-		for (auto conjunction : conjunctions_containing_fact[fact.var][fact.value])
-			if (std::includes(std::begin(facts), std::end(facts), std::begin(conjunction->facts), std::end(conjunction->facts)))
-				conjunctions_from_fact_set.push_back(conjunction);
-	// filter duplicates
-	std::sort(std::begin(conjunctions_from_fact_set), std::end(conjunctions_from_fact_set));
-	conjunctions_from_fact_set.erase(std::unique(std::begin(conjunctions_from_fact_set), std::end(conjunctions_from_fact_set)), std::end(conjunctions_from_fact_set));
-	conjunctions_from_fact_set.shrink_to_fit();
-	return conjunctions_from_fact_set;
+inline auto get_all_conjunctions(const FactSet &facts, const ConjunctionSubsetGenerator<Conjunction> &conjunction_subset_generator) -> std::vector<Conjunction *> {
+	return conjunction_subset_generator.generate_conjunction_subset(facts);
 }
 
 inline auto get_non_dominated_conjunctions(const std::vector<Conjunction *> &conjunctions) -> std::vector<Conjunction *> {
@@ -131,8 +121,8 @@ inline auto get_non_dominated_conjunctions(const std::vector<Conjunction *> &con
 	return non_dominated_conjunctions;
 }
 
-inline auto get_non_dominated_conjunctions(const FactSet &facts, const std::vector<std::vector<std::vector<Conjunction *>>> &conjunctions_containing_fact) -> std::vector<Conjunction *> {
-	return get_non_dominated_conjunctions(get_all_conjunctions(facts, conjunctions_containing_fact));
+inline auto get_non_dominated_conjunctions(const FactSet &facts, const ConjunctionSubsetGenerator<Conjunction> &conjunction_subset_generator) -> std::vector<Conjunction *> {
+	return get_non_dominated_conjunctions(get_all_conjunctions(facts, conjunction_subset_generator));
 }
 
 namespace detail {

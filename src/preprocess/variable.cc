@@ -18,10 +18,11 @@ Variable::Variable(istream &in) {
     check_magic(in, "end_variable");
     level = -1;
     necessary = false;
+    reachable_values = range;
+    reachable = vector<bool> (range, true);
 }
 
 void Variable::set_level(int theLevel) {
-    assert(level == -1);
     level = theLevel;
 }
 
@@ -43,7 +44,7 @@ string Variable::get_name() const {
 }
 
 bool Variable::is_necessary() const {
-    return necessary;
+    return necessary && reachable_values > 1;
 }
 
 void Variable::dump() const {
@@ -51,9 +52,11 @@ void Variable::dump() const {
     //       or get rid of this if it's no longer needed.
     cout << name << " [range " << get_range();
     if (level != -1)
-        cout << "; level " << level;
+        cout << "; level " << level << " values: ";
     if (is_derived())
-        cout << "; derived; layer: " << layer;
+        cout << "; derived; layer: " << layer << " values: ";
+    for (size_t i = 0; i < values.size(); ++i)
+        cout << " " << values[i];
     cout << "]" << endl;
 }
 
@@ -61,8 +64,35 @@ void Variable::generate_cpp_input(ofstream &outfile) const {
     outfile << "begin_variable" << endl
             << name << endl
             << layer << endl
-            << values.size() << endl;
+            << reachable_values << endl;
     for (size_t i = 0; i < values.size(); ++i)
-        outfile << values[i] << endl;
+        if (reachable[i])
+            outfile << values[i] << endl;
     outfile << "end_variable" << endl;
+}
+
+void Variable::remove_unreachable_facts() {
+    vector<string> new_values;
+    for (size_t i = 0; i < values.size(); i++) {
+        if (reachable[i]) {
+            new_values.push_back(values[i]);
+        }
+    }
+    new_values.swap(values);
+    vector<bool> (values.size(), true).swap(reachable);
+}
+
+int Variable::get_new_id(int value) const {
+    assert(reachable[value]);
+    if (!reachable[value]) {
+        cerr << "ERROR: Tried to update an unreachable fact" << endl;
+        exit(-1);
+    }
+    int id = 0;
+    for (int i = 0; i < value; ++i) {
+        if (reachable[i]) {
+            id++;
+        }
+    }
+    return id;
 }

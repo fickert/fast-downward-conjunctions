@@ -213,7 +213,7 @@ static SearchEngine *_parse(OptionParser &parser) {
 
 	if (opts.get_list<Heuristic *>("delete_after_phase_heuristics").size() != opts.get_list<int>("delete_after_phase_phases").size()) {
 		std::cerr << "delete_after_phase_heuristics must have the same length as delete_after_phase_heuristics" << std::endl;
-		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_INPUT_ERROR);
 	}
 
     opts.verify_list_non_empty<ParseTree>("engine_configs");

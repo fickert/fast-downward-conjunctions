@@ -554,13 +554,13 @@ GeneratorLeafVector<Conjunction>::GeneratorLeafVector(std::vector<Conjunction *>
 template<class Conjunction>
 auto GeneratorLeafVector<Conjunction>::add_conjunction(Conjunction &, int) -> std::pair<bool, std::unique_ptr<GeneratorBase<Conjunction>>> {
 	std::cerr << "GeneratorLeafVector not implemented for conjunctions" << std::endl;
-	utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 }
 
 template<class Conjunction>
 auto GeneratorLeafVector<Conjunction>::remove_conjunction(Conjunction &, int) -> std::pair<bool, std::unique_ptr<GeneratorBase<Conjunction>>> {
 	std::cerr << "GeneratorLeafVector not implemented for conjunctions" << std::endl;
-	utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 }
 
 template<class Conjunction>

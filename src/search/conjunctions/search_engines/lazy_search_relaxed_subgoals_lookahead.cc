@@ -46,7 +46,9 @@ LazySearchRelaxedSubgoalsLookahead::LazySearchRelaxedSubgoalsLookahead(const opt
 	  conjunctions_heuristic(static_cast<ConjunctionsHeuristic *>(opts.get<Heuristic *>("conjunctions_heuristic"))),
 	  strategy(opts.get<std::shared_ptr<ConjunctionGenerationStrategy>>("strategy")),
 	  novelty_heuristic(static_cast<novelty::NoveltyHeuristic *>(opts.get<Heuristic *>("novelty"))),
-	  subgoal_heuristic(ConjunctionsSubgoalHeuristic::SubgoalAggregationMethod(opts.get_enum("subgoal_aggregation_method")), opts.get<bool>("path_dependent_subgoals")),
+	  subgoal_heuristic(ConjunctionsSubgoalHeuristic::SubgoalAggregationMethod(opts.get_enum("subgoal_aggregation_method")),
+	                    opts.get<bool>("path_dependent_subgoals")),
+	  do_learning_if_lookahead_closed(static_cast<LookaheadClosedLearning>(opts.get_enum("do_learning_if_lookahead_closed"))),
 	  solved(false),
 	  lookahead_weight(opts.get<int>("lookahead_weight")),
 	  no_learning(opts.get<bool>("no_learning")),
@@ -186,11 +188,11 @@ void LazySearchRelaxedSubgoalsLookahead::get_successor_operators(std::vector<con
 	}
 }
 
-void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node, SearchSpace &current_search_space) {
+void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node) {
 	node.close();
 	++lookahead_statistics.num_lookahead_expansions;
 	const auto state = node.get_state();
-	assert(!search_space.get_node(state).is_dead_end());
+	assert(!state_registry.lookup_state(state) || !search_space.get_node(*state_registry.lookup_state(state)).is_dead_end());
 	auto applicable_ops = std::vector<const GlobalOperator *>();
 	g_successor_generator->generate_applicable_ops(state, applicable_ops);
 	
@@ -198,12 +200,13 @@ void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node, Sear
 		const auto succ_g = node.get_g() + get_adjusted_cost(*op);
 		if (current_real_g + node.get_real_g() + op->get_cost() > bound)
 			continue;
-		const auto succ = state_registry.get_successor_state(state, *op);
+		const auto succ = lookahead_state_registry->get_successor_state(state, *op);
 		statistics.inc_generated();
 		++lookahead_statistics.num_lookahead_generated;
-		auto succ_node = current_search_space.get_node(succ);
-		if (search_space.get_node(succ).is_dead_end())
+		const auto global_succ = state_registry.lookup_state(succ);
+		if (global_succ && search_space.get_node(*global_succ).is_dead_end())
 			continue;
+		auto succ_node = lookahead_search_space->get_node(succ);
 		if (!succ_node.is_new()) {
 			if (succ_node.get_g() > succ_g)
 				succ_node.update_parent(node, op);
@@ -222,18 +225,20 @@ auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, 
 		conjunctions.insert(std::end(conjunctions), std::begin(bsg_node.supported_conjunctions), std::end(bsg_node.supported_conjunctions));
 	std::sort(std::begin(conjunctions), std::end(conjunctions));
 	conjunctions.erase(std::unique(std::begin(conjunctions), std::end(conjunctions)), std::end(conjunctions));
-	subgoal_heuristic.initialize(std::move(conjunctions), current_eval_context.get_state().get_id());
-	lookahead_search_space = std::make_unique<SearchSpace>(state_registry, cost_type);
+	lookahead_state_registry = std::make_unique<StateRegistry>(*g_root_task(), *g_state_packer, *g_axiom_evaluator, g_initial_state_data);
+	lookahead_search_space = std::make_unique<SearchSpace>(*lookahead_state_registry, cost_type);
 	lookahead_open_list = create_open_list(lookahead_weight);
-	auto initial_node = lookahead_search_space->get_node(current_state);
+	const auto lookahead_initial_state = lookahead_state_registry->import_state(current_state);
+	subgoal_heuristic.initialize(std::move(conjunctions), lookahead_initial_state.get_id());
+	auto initial_node = lookahead_search_space->get_node(lookahead_initial_state);
 	initial_node.open_initial();
-	lookahead_expand(initial_node, *lookahead_search_space);
+	lookahead_expand(initial_node);
 
 	novelty_heuristic->reset();
 	// evaluate novelty to mark currently true facts non-novel for other states
 	if (current_eval_context.get_heuristic_value(novelty_heuristic) == 1) {
 		assert(false && "should be unreachable");
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	auto best_state_id = StateID::no_state;
@@ -242,7 +247,7 @@ auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, 
 	while (!lookahead_open_list.empty()) {
 		auto [state_id, g, h] = lookahead_open_list.top();
 		lookahead_open_list.pop();
-		const auto state = state_registry.lookup_state(state_id);
+		const auto state = lookahead_state_registry->lookup_state(state_id);
 		auto eval_context = EvaluationContext(state, &statistics);
 		auto node = lookahead_search_space->get_node(state);
 		assert(node.is_open());
@@ -264,7 +269,7 @@ auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, 
 			best_state_h = h;
 			best_state_id = state.get_id();
 		}
-		lookahead_expand(node, *lookahead_search_space);
+		lookahead_expand(node);
 	}
 
 	return {IN_PROGRESS, best_state_id};
@@ -337,6 +342,32 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::fetch_next_state() {
 	return IN_PROGRESS;
 }
 
+auto LazySearchRelaxedSubgoalsLookahead::generate_conjunction(SearchNode &node, SearchNode &global_lookahead_node) -> ConjunctionGenerationStatus {
+	heuristic_cache.clear();
+	const auto current_h = current_eval_context.get_heuristic_value(conjunctions_heuristic);
+	auto current_preferred = current_eval_context.get_preferred_operators(conjunctions_heuristic);
+	// generate conjunctions according to the selected strategy for this step
+	const auto result = generate_conjunctions(*conjunctions_heuristic, ConjunctionGenerationStrategy::Event::LOCAL_MINIMUM, current_eval_context, true,
+	                                          bound - current_real_g);
+	if (result == ConjunctionGenerationStrategy::Result::SOLVED && current_real_g + conjunctions_heuristic->get_last_bsg().get_real_cost() <= bound)
+		return ConjunctionGenerationStatus::SOLVED;
+	if (result == ConjunctionGenerationStrategy::Result::DEAD_END) {
+		node.mark_as_dead_end();
+		statistics.inc_dead_ends();
+		if (global_lookahead_node.is_new())
+			global_lookahead_node.open_initial();
+		if (global_lookahead_node.is_open()) {
+			global_lookahead_node.mark_as_dead_end();
+			statistics.inc_dead_ends();
+		}
+		return ConjunctionGenerationStatus::DEAD_END;
+	}
+	// we don't want to reevaluate the heuristic but the heuristic cache is cleared in the conjunction generation process, so just reuse the old value
+	const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_h_value(current_h);
+	const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_preferred_operators(std::move(current_preferred));
+	return ConjunctionGenerationStatus::DEFAULT;
+}
+
 SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 	// Invariants:
 	// - current_state is the next state for which we want to compute the heuristic.
@@ -407,6 +438,32 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 			assert(current_real_g == node.get_real_g());
 			assert(conjunctions_heuristic->is_last_bsg_valid_for_state(current_state) || enable_heuristic_cache);
 
+			/*
+			if (conjunctions_heuristic->is_last_bsg_valid_for_state(current_state)) {
+				if (check_relaxed_plans
+					&& is_valid_plan_in_the_original_task(conjunctions_heuristic->get_last_bsg(), current_state.get_values(), *g_root_task())
+					&& current_real_g + conjunctions_heuristic->get_last_bsg().get_real_cost() <= bound) {
+					set_solution(conjunctions_heuristic->get_last_relaxed_plan(), current_state);
+					return SOLVED;
+				}
+
+				const auto current_h = current_eval_context.get_heuristic_value(conjunctions_heuristic);
+				auto current_preferred = current_eval_context.get_preferred_operators(conjunctions_heuristic);
+				// generate conjunctions according to the selected strategy for this step
+				const auto result = generate_conjunctions(*conjunctions_heuristic, ConjunctionGenerationStrategy::Event::STEP, current_eval_context, true, bound - current_real_g);
+				if (result == ConjunctionGenerationStrategy::Result::SOLVED && current_real_g + conjunctions_heuristic->get_last_bsg().get_real_cost() <= bound)
+					return SOLVED;
+				if (result == ConjunctionGenerationStrategy::Result::DEAD_END) {
+					node.mark_as_dead_end();
+					statistics.inc_dead_ends();
+					return fetch_next_state();
+				}
+				// we don't want to reevaluate the heuristic but the heuristic cache is cleared in the conjunction generation process, so just reuse the old value
+				const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_h_value(current_h);
+				const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_preferred_operators(std::move(current_preferred));
+			}
+			*/
+
 			node.close();
 			if (check_goal_and_set_plan(current_state))
 				return SOLVED;
@@ -423,14 +480,15 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 				statistics.inc_dead_ends();
 				return fetch_next_state();
 			}
-			const auto lookahead_state = state_registry.lookup_state(lookahead_state_id);
+			const auto original_lookahead_state = lookahead_state_registry->lookup_state(lookahead_state_id);
+			const auto lookahead_state = state_registry.import_state(original_lookahead_state);
 
 			if (lookahead_status == SOLVED) {
 				++lookahead_statistics.num_lookahead_is_selected;
 				lookahead_statistics.notify_lookahead_is_new_or_open(current_eval_context.get_heuristic_value(conjunctions_heuristic));
 				assert(test_goal(lookahead_state));
 				auto lookahead_plan = Plan();
-				lookahead_search_space->trace_path(lookahead_state, lookahead_plan);
+				lookahead_search_space->trace_path(original_lookahead_state, lookahead_plan);
 				auto overall_plan = Plan();
 				search_space.trace_path(current_state, overall_plan);
 				overall_plan.insert(std::end(overall_plan), std::begin(lookahead_plan), std::end(lookahead_plan));
@@ -438,43 +496,48 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 				return SOLVED;
 			}
 
-			auto lookahead_node = lookahead_search_space->get_node(lookahead_state);
+			auto lookahead_node = lookahead_search_space->get_node(original_lookahead_state);
 			auto lookahead_eval_context = EvaluationContext(lookahead_state, current_g + lookahead_node.get_g(), true, &statistics);
 
 			auto global_lookahead_node = search_space.get_node(lookahead_state);
 
-			if (global_lookahead_node.is_new() || global_lookahead_node.is_open()) {
+			if (do_learning_if_lookahead_closed == LookaheadClosedLearning::YES && global_lookahead_node.is_closed()) {
+				++lookahead_statistics.num_lookahead_is_closed;
+				if (!no_learning) {
+					switch (generate_conjunction(node, global_lookahead_node)) {
+					case ConjunctionGenerationStatus::SOLVED:
+						return SOLVED;
+					case ConjunctionGenerationStatus::DEAD_END:
+						return fetch_next_state();
+					case ConjunctionGenerationStatus::DEFAULT:
+						break;
+					}
+				}
+			} else if (global_lookahead_node.is_new() || global_lookahead_node.is_open() || (do_learning_if_lookahead_closed == LookaheadClosedLearning::MAYBE && global_lookahead_node.is_closed())) {
 				if (lookahead_eval_context.is_heuristic_infinite(conjunctions_heuristic) || lookahead_eval_context.get_heuristic_value(conjunctions_heuristic) >= h) {
-					if (lookahead_eval_context.is_heuristic_infinite(conjunctions_heuristic)) {
+					if (global_lookahead_node.is_closed()) {
+						++lookahead_statistics.num_lookahead_is_closed;
+					} else if (lookahead_eval_context.is_heuristic_infinite(conjunctions_heuristic)) {
 						global_lookahead_node.mark_as_dead_end();
 						statistics.inc_dead_ends();
 						++lookahead_statistics.num_lookahead_is_dead_end;
 					} else {
+						assert(!global_lookahead_node.is_closed());
 						lookahead_statistics.notify_lookahead_is_new_or_open(current_eval_context.get_heuristic_value(conjunctions_heuristic) - lookahead_eval_context.get_heuristic_value(conjunctions_heuristic));
 					}
 					if (!no_learning) {
-						const auto current_h = current_eval_context.get_heuristic_value(conjunctions_heuristic);
-						auto current_preferred = current_eval_context.get_preferred_operators(conjunctions_heuristic);
-						// generate conjunctions according to the selected strategy for this step
-						const auto result = generate_conjunctions(*conjunctions_heuristic, ConjunctionGenerationStrategy::Event::LOCAL_MINIMUM, current_eval_context, true, bound - current_real_g);
-						if (result == ConjunctionGenerationStrategy::Result::SOLVED && current_real_g + conjunctions_heuristic->get_last_bsg().get_real_cost() <= bound)
+						switch (generate_conjunction(node, global_lookahead_node)) {
+						case ConjunctionGenerationStatus::SOLVED:
 							return SOLVED;
-						if (result == ConjunctionGenerationStrategy::Result::DEAD_END) {
-							node.mark_as_dead_end();
-							// since the lookahead node is a successor of the current one, we can safely mark it as a dead end too
-							if (global_lookahead_node.is_new())
-								global_lookahead_node.open_initial();
-							global_lookahead_node.mark_as_dead_end();
-							statistics.inc_dead_ends(2);
+						case ConjunctionGenerationStatus::DEAD_END:
 							return fetch_next_state();
+						case ConjunctionGenerationStatus::DEFAULT:
+							break;
 						}
-						// we don't want to reevaluate the heuristic but the heuristic cache is cleared in the conjunction generation process, so just reuse the old value
-						const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_h_value(current_h);
-						const_cast<HeuristicCache &>(current_eval_context.get_cache())[conjunctions_heuristic].set_preferred_operators(std::move(current_preferred));
 					}
-				} else {
+				} else if (!global_lookahead_node.is_closed()) {
 					auto lookahead_plan = Plan();
-					lookahead_search_space->trace_path(lookahead_state, lookahead_plan);
+					lookahead_search_space->trace_path(original_lookahead_state, lookahead_plan);
 
 					auto new_g = current_g;
 					auto new_real_g = current_real_g;
@@ -495,11 +558,12 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 					lookahead_statistics.notify_lookahead_is_new_or_open(current_eval_context.get_heuristic_value(conjunctions_heuristic) - lookahead_eval_context.get_heuristic_value(conjunctions_heuristic));
 					++lookahead_statistics.num_lookahead_is_selected;
 					next_evaluation_context.emplace(std::move(lookahead_eval_context));
+				} else {
+					assert(do_learning_if_lookahead_closed == LookaheadClosedLearning::MAYBE && global_lookahead_node.is_closed());
+					++lookahead_statistics.num_lookahead_is_closed;
 				}
-			} else if (global_lookahead_node.is_dead_end()) {
-				++lookahead_statistics.num_lookahead_is_dead_end;
 			} else {
-				assert(global_lookahead_node.is_closed());
+				assert(do_learning_if_lookahead_closed == LookaheadClosedLearning::NO && global_lookahead_node.is_closed());
 				++lookahead_statistics.num_lookahead_is_closed;
 			}
 
@@ -593,6 +657,8 @@ static void _add_lookahead_options(options::OptionParser &parser) {
 	parser.add_option<Heuristic *>("novelty", "novelty heuristic used for pruning in BFS explorations, must be of type NoveltyHeuristic", "novelty(cache_estimates=false)");
 	parser.add_enum_option("subgoal_aggregation_method", {"COUNT", "SUM", "MAX"}, "achieved relaxed plan subgoals aggregation method", "COUNT");
 	parser.add_option<bool>("path_dependent_subgoals", "consider all subgoals reached on the path to each node", "true");
+	parser.add_enum_option("do_learning_if_lookahead_closed", {"YES", "NO", "MAYBE"},
+	                       "generate a conjunction also if the lookahead returned a state that was already closed", "NO");
 	parser.add_option<bool>("no_learning", "don't learn conjunctions", "false");
 }
 

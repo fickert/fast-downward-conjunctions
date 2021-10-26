@@ -10,6 +10,7 @@
 
 #include "utils/hash.h"
 
+#include <optional>
 #include <set>
 #include <unordered_set>
 
@@ -208,6 +209,11 @@ public:
       against the states generated in this state registry.
     */
     GlobalState import_state(const GlobalState &state);
+
+    /*
+      Look up a given state from another state registry and return its equivalent if it exists.
+    */
+	std::optional<GlobalState> lookup_state(const GlobalState &state);
 
     /*
       Returns the number of states registered so far.

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import argparse
 import sys
 
@@ -28,6 +26,9 @@ def parse_args():
         "needed for grounded input files that would otherwise produce "
         "too many candidates.")
     argparser.add_argument(
+        "--sas-file", default="output.sas",
+        help="path to the SAS output file (default: %(default)s)")
+    argparser.add_argument(
         "--invariant-generation-max-time", default=300, type=int,
         help="max time for invariant generation (default: %(default)ds)")
     argparser.add_argument(
@@ -40,8 +41,22 @@ def parse_args():
         dest="filter_unreachable_facts", action="store_false",
         help="keep facts that can't be reached from the initial state")
     argparser.add_argument(
+        "--skip-variable-reordering",
+        dest="reorder_variables", action="store_false",
+        help="do not reorder variables based on the causal graph. Do not use "
+        "this option with the causal graph heuristic!")
+    argparser.add_argument(
+        "--keep-unimportant-variables",
+        dest="filter_unimportant_vars", action="store_false",
+        help="keep variables that do not influence the goal in the causal graph")
+    argparser.add_argument(
         "--dump-task", action="store_true",
         help="dump human-readable SAS+ representation of the task")
+    argparser.add_argument(
+        "--layer-strategy", default="min", choices=["min", "max"],
+        help="How to assign layers to derived variables. 'min' attempts to put as "
+        "many variables into the same layer as possible, while 'max' puts each variable "
+        "into its own layer unless it is part of a cycle.")
     return argparser.parse_args()
 
 

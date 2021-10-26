@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import print_function
-
 """ Module for running planner portfolios.
 
 Memory limits: We apply the same memory limit that is given to the
@@ -19,10 +15,8 @@ the process is started.
 
 __all__ = ["run"]
 
-import os
 import subprocess
 import sys
-import traceback
 
 from . import call
 from . import limits
@@ -33,29 +27,37 @@ from . import util
 DEFAULT_TIMEOUT = 1800
 
 
+def adapt_heuristic_cost_type(arg, cost_type):
+    if cost_type == "normal":
+        transform = "no_transform()"
+    else:
+        transform = "adapt_costs({})".format(cost_type)
+    return arg.replace("H_COST_TRANSFORM", transform)
+
+
 def adapt_args(args, search_cost_type, heuristic_cost_type, plan_manager):
-    g_bound = plan_manager.get_best_plan_cost()
+    g_bound = plan_manager.get_next_portfolio_cost_bound()
     plan_counter = plan_manager.get_plan_counter()
     print("g bound: %s" % g_bound)
     print("next plan number: %d" % (plan_counter + 1))
 
     for index, arg in enumerate(args):
-        if arg == "--heuristic":
+        if arg == "--evaluator" or arg == "--heuristic":
             heuristic = args[index + 1]
-            heuristic = heuristic.replace("H_COST_TYPE", heuristic_cost_type)
+            heuristic = adapt_heuristic_cost_type(heuristic, heuristic_cost_type)
             args[index + 1] = heuristic
         elif arg == "--search":
             search = args[index + 1]
             if "bound=BOUND" not in search:
-                raise ValueError(
+                returncodes.exit_with_driver_critical_error(
                     "Satisficing portfolios need the string "
                     "\"bound=BOUND\" in each search configuration. "
                     "See the FDSS portfolios for examples.")
             for name, value in [
                     ("BOUND", g_bound),
-                    ("H_COST_TYPE", heuristic_cost_type),
                     ("S_COST_TYPE", search_cost_type)]:
                 search = search.replace(name, str(value))
+            search = adapt_heuristic_cost_type(search, heuristic_cost_type)
             args[index + 1] = search
             break
 
@@ -67,7 +69,7 @@ def run_search(executable, args, sas_file, plan_manager, time, memory):
 
     try:
         exitcode = call.check_call(
-            complete_args, stdin=sas_file,
+            "search", complete_args, stdin=sas_file,
             time_limit=time, memory_limit=memory)
     except subprocess.CalledProcessError as err:
         exitcode = err.returncode
@@ -96,8 +98,10 @@ def run_sat_config(configs, pos, search_cost_type, heuristic_cost_type,
     _, args_template = configs[pos]
     args = list(args_template)
     adapt_args(args, search_cost_type, heuristic_cost_type, plan_manager)
-    args.extend([
-        "--internal-previous-portfolio-plans", str(plan_manager.get_plan_counter())])
+    if not plan_manager.abort_portfolio_after_first_plan():
+        args.extend([
+            "--internal-previous-portfolio-plans",
+            str(plan_manager.get_plan_counter())])
     result = run_search(executable, args, sas_file, plan_manager, run_time, memory)
     plan_manager.process_new_plans()
     return result
@@ -105,7 +109,7 @@ def run_sat_config(configs, pos, search_cost_type, heuristic_cost_type,
 
 def run_sat(configs, executable, sas_file, plan_manager, final_config,
             final_config_builder, timeout, memory):
-    # If the configuration contains S_COST_TYPE or H_COST_TYPE and the task
+    # If the configuration contains S_COST_TYPE or H_COST_TRANSFORM and the task
     # has non-unit costs, we start by treating all costs as one. When we find
     # a solution, we rerun the successful config with real costs.
     heuristic_cost_type = "one"
@@ -121,11 +125,13 @@ def run_sat(configs, executable, sas_file, plan_manager, final_config,
                 return
 
             yield exitcode
-            if exitcode == returncodes.EXIT_UNSOLVABLE:
+            if exitcode == returncodes.SEARCH_UNSOLVABLE:
                 return
 
-            if exitcode == returncodes.EXIT_PLAN_FOUND:
-                configs_next_round.append(args)
+            if exitcode == returncodes.SUCCESS:
+                if plan_manager.abort_portfolio_after_first_plan():
+                    return
+                configs_next_round.append((relative_time, args))
                 if (not changed_cost_types and can_change_cost_type(args) and
                     plan_manager.get_problem_type() == "general cost"):
                     print("Switch to real costs and repeat last run.")
@@ -139,7 +145,7 @@ def run_sat(configs, executable, sas_file, plan_manager, final_config,
                         return
 
                     yield exitcode
-                    if exitcode == returncodes.EXIT_UNSOLVABLE:
+                    if exitcode == returncodes.SEARCH_UNSOLVABLE:
                         return
                 if final_config_builder:
                     print("Build final config.")
@@ -169,30 +175,29 @@ def run_opt(configs, executable, sas_file, plan_manager, timeout, memory):
                               run_time, memory)
         yield exitcode
 
-        if exitcode in [returncodes.EXIT_PLAN_FOUND, returncodes.EXIT_UNSOLVABLE]:
+        if exitcode in [returncodes.SUCCESS, returncodes.SEARCH_UNSOLVABLE]:
             break
 
 
 def can_change_cost_type(args):
-    return any("S_COST_TYPE" in part or "H_COST_TYPE" in part for part in args)
+    return any("S_COST_TYPE" in part or "H_COST_TRANSFORM" in part for part in args)
 
 
 def get_portfolio_attributes(portfolio):
     attributes = {}
-    with open(portfolio) as portfolio_file:
+    with open(portfolio, "rb") as portfolio_file:
         content = portfolio_file.read()
         try:
             exec(content, attributes)
         except Exception:
-            traceback.print_exc()
-            raise ImportError(
+            returncodes.exit_with_driver_critical_error(
                 "The portfolio %s could not be loaded. Maybe it still "
                 "uses the old portfolio syntax? See the FDSS portfolios "
                 "for examples using the new syntax." % portfolio)
     if "CONFIGS" not in attributes:
-        raise ValueError("portfolios must define CONFIGS")
+        returncodes.exit_with_driver_critical_error("portfolios must define CONFIGS")
     if "OPTIMAL" not in attributes:
-        raise ValueError("portfolios must define OPTIMAL")
+        returncodes.exit_with_driver_critical_error("portfolios must define OPTIMAL")
     return attributes
 
 
@@ -209,15 +214,15 @@ def run(portfolio, executable, sas_file, plan_manager, time, memory):
     final_config = attributes.get("FINAL_CONFIG")
     final_config_builder = attributes.get("FINAL_CONFIG_BUILDER")
     if "TIMEOUT" in attributes:
-        sys.exit(
+        returncodes.exit_with_driver_input_error(
             "The TIMEOUT attribute in portfolios has been removed. "
             "Please pass a time limit to fast-downward.py.")
 
     if time is None:
-        if os.name == "nt":
-            sys.exit(limits.RESOURCE_MODULE_MISSING_MSG)
+        if sys.platform == "win32":
+            returncodes.exit_with_driver_unsupported_error(limits.CANNOT_LIMIT_TIME_MSG)
         else:
-            sys.exit(
+            returncodes.exit_with_driver_input_error(
                 "Portfolios need a time limit. Please pass --search-time-limit "
                 "or --overall-time-limit to fast-downward.py.")
 
@@ -230,6 +235,4 @@ def run(portfolio, executable, sas_file, plan_manager, time, memory):
         exitcodes = run_sat(
             configs, executable, sas_file, plan_manager, final_config,
             final_config_builder, timeout, memory)
-    exitcode = returncodes.generate_portfolio_exitcode(exitcodes)
-    if exitcode != 0:
-        raise subprocess.CalledProcessError(exitcode, ["run-portfolio", portfolio])
+    return returncodes.generate_portfolio_exitcode(list(exitcodes))

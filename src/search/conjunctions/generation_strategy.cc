@@ -79,6 +79,10 @@ void ConflictExtractionStrategy::dump_options() const {
 	std::cout << "check relaxed plan: " << check_relaxed_plan << std::endl;
 }
 
+void ConflictExtractionStrategy::print_statistics() const {
+	conflict_extraction->print_statistics();
+}
+
 
 // generate all conjunctions up to size m
 
@@ -145,6 +149,7 @@ GenerateInitially::GenerateInitially(const options::Options &opts) :
 	conjunction_growth_bound(opts.get<double>("conjunction_growth_bound")),
 	counter_growth_bound(opts.get<double>("counter_growth_bound")),
 	counter_sum_growth_bound(opts.get<double>("counter_sum_growth_bound")),
+	max_num_conjunctions(opts.get<int>("max_num_conjunctions")),
 	learning_time(opts.get<int>("learning_time")) {}
 
 GenerateInitially::~GenerateInitially() {}
@@ -155,7 +160,8 @@ auto GenerateInitially::modify_conjunctions_init(ConjunctionsHeuristic &heuristi
 	while (std::chrono::steady_clock::now() < end_time
 		&& heuristic.get_conjunction_growth() < conjunction_growth_bound
 		&& heuristic.get_counter_growth() < counter_growth_bound
-		&& heuristic.get_counter_size_growth() < counter_sum_growth_bound) {
+		&& heuristic.get_counter_size_growth() < counter_sum_growth_bound
+		&& heuristic.get_num_added_conjunctions() < max_num_conjunctions) {
 
 		auto result = generate_conjunctions(heuristic, task, eval_context, conjunctions_per_iteration);
 		if (result.first != Result::MODIFIED)
@@ -187,6 +193,7 @@ void GenerateInitially::add_options(options::OptionParser &parser) {
 	parser.add_option<double>("conjunction_growth_bound", "maximum growth in the number of conjunctions (including singletons) as a factor of the original", std::to_string(std::numeric_limits<double>::max()));
 	parser.add_option<double>("counter_growth_bound", "maximum growth in the number of counters as a factor of the original", "1.5");
 	parser.add_option<double>("counter_sum_growth_bound", "maximum growth in the sum of counters as a factor of the original", std::to_string(std::numeric_limits<double>::max()));
+	parser.add_option<int>("max_num_conjunctions", "maximum number of conjunctions to generate", "infinity", options::Bounds("0", "infinity"));
 	parser.add_option<int>("learning_time", "bound on learning time in seconds", "900");
 }
 
@@ -205,7 +212,7 @@ LoadFromFile::LoadFromFile(const options::Options &opts) :
 	file_name(opts.get<std::string>("file_name")) {
 	if (!std::filesystem::exists(std::filesystem::path(file_name))) {
 		std::cout << "File not found: " << file_name << std::endl;
-		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_INPUT_ERROR);
 	}
 }
 
@@ -276,7 +283,7 @@ static auto _parse_load_from_file(options::OptionParser &parser) -> std::shared_
 auto ReadCountFromFile::read_count(const std::string &file_name) -> int {
 	if (!std::filesystem::exists(std::filesystem::path(file_name))) {
 		std::cout << "File not found: " << file_name << std::endl;
-		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_INPUT_ERROR);
 	}
 	auto in = std::ifstream(file_name);
 	auto count = 0;
@@ -338,9 +345,13 @@ auto operator<<(std::ostream &out, const RemovalStrategy rs) -> std::ostream & {
 		return out << "MOST_COUNTERS";
 	case RemovalStrategy::RANDOM:
 		return out << "RANDOM";
+	case RemovalStrategy::LEAST_USEFUL_SIMPLE:
+		return out << "LEAST_USEFUL_SIMPLE";
+	case RemovalStrategy::LEAST_USEFUL_ADVANCED:
+		return out << "LEAST_USEFUL_ADVANCED";
 	default:
 		std::cerr << "Unknown removal strategy option:" << rs << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -361,9 +372,15 @@ void remove_conjunctions(ConjunctionsHeuristic &heuristic, int count, RemovalStr
 	case RemovalStrategy::RANDOM:
 		heuristic.remove_random_conjunctions(count, min_evaluations);
 		break;
+	case RemovalStrategy::LEAST_USEFUL_SIMPLE:
+		heuristic.remove_least_useful_conjunctions_simple(count, min_evaluations);
+		break;
+	case RemovalStrategy::LEAST_USEFUL_ADVANCED:
+		heuristic.remove_least_useful_conjunctions_advanced(count, min_evaluations);
+		break;
 	default:
 		std::cerr << "Unknown replacement strategy option:" << static_cast<int>(removal_strategy) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -380,7 +397,7 @@ auto remove_conjunctions_until_bound_reached(ConjunctionsHeuristic &heuristic, R
 }
 
 void add_removal_strategy_options(options::OptionParser &parser) {
-	parser.add_enum_option("removal_strategy", {"OLDEST", "LEAST_FREQUENTLY_IN_RELAXED_PLANS", "LEAST_EFFICIENT", "MOST_COUNTERS", "RANDOM"},
+	parser.add_enum_option("removal_strategy", {"OLDEST", "LEAST_FREQUENTLY_IN_RELAXED_PLANS", "LEAST_EFFICIENT", "MOST_COUNTERS", "RANDOM", "LEAST_USEFUL_SIMPLE", "LEAST_USEFUL_ADVANCED"},
 		"strategy describing which conjunctions to replace", "OLDEST");
 	parser.add_option<int>("min_evaluations", "minimum number of evaluations a conjunction has to be part of before it can be replaced", "0");
 }
@@ -400,7 +417,7 @@ auto operator<<(std::ostream &out, const InitialRemovalMode irm) -> std::ostream
 		return out << "UNTIL_BOUND";
 	default:
 		std::cerr << "Unknown iniitial removal mode option:" << static_cast<int>(irm) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -447,7 +464,7 @@ auto MaintainFixedSize::modify_conjunctions_init(ConjunctionsHeuristic &heuristi
 	}
 	default:
 		std::cerr << "Unknown iniitial removal mode option:" << static_cast<int>(initial_removal_mode) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -518,7 +535,7 @@ auto MaintainFixedSizeProbabilistic::modify_conjunctions_init(ConjunctionsHeuris
 		break;
 	default:
 		std::cerr << "Unknown iniitial removal mode option:" << static_cast<int>(initial_removal_mode) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	if (!generate_initially)
@@ -625,7 +642,7 @@ auto MaintainFixedSizeLocalMinima::modify_conjunctions_init(ConjunctionsHeuristi
 	}
 	default:
 		std::cerr << "Unknown iniitial removal mode option:" << static_cast<int>(initial_removal_mode) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 

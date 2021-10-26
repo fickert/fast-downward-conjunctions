@@ -30,7 +30,7 @@ NoveltyLinker::NoveltyLinker(const Options &opts)
 
 int NoveltyLinker::compute_heuristic(const GlobalState &) {
 	std::cerr << "The novelty linker can NOT be used as a heuristic!" << std::endl;
-	utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 }
 
 static Heuristic *_parse(OptionParser &parser) {

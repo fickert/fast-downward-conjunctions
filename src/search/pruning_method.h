@@ -9,6 +9,7 @@ class GlobalState;
 // TODO: use the task interface for PruningMethod
 class PruningMethod {
 public:
+    virtual ~PruningMethod() = default;
     /* This method should never be called for goal states. This can be checked
        with assertions in derived classes. */
     virtual void prune_operators(const GlobalState &state,

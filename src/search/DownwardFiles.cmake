@@ -1,73 +1,13 @@
-set(PLANNER_SOURCES
-        planner.cc
-)
-
 # See http://www.fast-downward.org/ForDevelopers/AddingSourceFiles
 # for general information on adding source files and CMake plugins.
 #
-# If you're adding a file to the codebase which *isn't* a plugin, add
-# it to the following list. We assume that every *.cc file has a
-# corresponding *.h file and add headers to the project automatically.
-# For plugin files, see below.
-
-set(CORE_SOURCES
-        abstract_task.cc
-        axioms.cc
-        causal_graph.cc
-        equivalence_relation.cc
-        evaluation_context.cc
-        evaluation_result.cc
-        global_operator.cc
-        globals.cc
-        global_state.cc
-        heuristic_cache.cc
-        heuristic.cc
-        int_packer.cc
-        operator_cost.cc
-        option_parser.h
-        option_parser_util.h
-        per_state_information.cc
-        plugin.h
-        pruning_method.cc
-        priority_queue.cc
-        sampling.cc
-        scalar_evaluator.cc
-        search_engine.cc
-        search_node_info.cc
-        search_progress.cc
-        search_space.cc
-        search_statistics.cc
-        segmented_vector.cc
-        state_id.cc
-        state_registry.cc
-        task_proxy.cc
-        task_tools.cc
-        variable_order_finder.cc
-
-        open_lists/alternation_open_list.cc
-        open_lists/bucket_open_list.cc
-        open_lists/epsilon_greedy_open_list.cc
-        open_lists/open_list.cc
-        open_lists/open_list_factory.cc
-        open_lists/pareto_open_list.cc
-        open_lists/standard_scalar_open_list.cc
-        open_lists/tiebreaking_open_list.cc
-        open_lists/type_based_open_list.cc
-
-        task_utils/successor_generator.cc
-        task_utils/successor_generator_factory.cc
-        task_utils/successor_generator_internals.cc
-)
-
-fast_downward_add_headers_to_sources_list(CORE_SOURCES)
-source_group(core FILES planner.cc ${CORE_SOURCES})
-list(APPEND PLANNER_SOURCES ${CORE_SOURCES})
-
-## Details of the plugins
-#
-# For now, everything defaults to being enabled - it's up to the user to specify
+# All plugins are enabled by default and users can disable them by specifying
 #    -DPLUGIN_FOO_ENABLED=FALSE
-# to disable a given plugin.
+# The default behavior can be changed so all non-essential plugins are
+# disabled by default by specifying
+#    -DDISABLE_PLUGINS_BY_DEFAULT=TRUE
+# In that case, individual plugins can be enabled with
+#    -DPLUGIN_FOO_ENABLED=TRUE
 #
 # Defining a new plugin:
 #    fast_downward_plugin(
@@ -81,43 +21,143 @@ list(APPEND PLANNER_SOURCES ${CORE_SOURCES})
 #        [ CORE_PLUGIN ]
 #    )
 #
-# <DISPLAY_NAME> defaults to lower case <NAME> and is used to group
-#                files in IDEs and for messages.
+# <DISPLAY_NAME> defaults to lower case <NAME> and is used to group files
+#   in IDEs and for messages.
 # <HELP> defaults to <DISPLAY_NAME> and is used to describe the cmake option.
-# DEPENDS lists plugins that will be automatically enabled if this plugin
-# is enabled. If the dependency was not enabled before, this will be logged.
+# SOURCES lists the source files that are part of the plugin. Entries are
+#   listed without extension. For an entry <file>, both <file>.h and <file>.cc
+#   are added if the files exist.
+# DEPENDS lists plugins that will be automatically enabled if this plugin is
+#   enabled. If the dependency was not enabled before, this will be logged.
 # DEPENDENCY_ONLY disables the plugin unless it is needed as a dependency and
-#     hides the option to enable the plugin in cmake GUIs like ccmake.
-# CORE_PLUGIN enables the plugin and hides the option to disable it in
-#     cmake GUIs like ccmake.
+#   hides the option to enable the plugin in cmake GUIs like ccmake.
+# CORE_PLUGIN always enables the plugin (even if DISABLE_PLUGINS_BY_DEFAULT
+#   is used) and hides the option to disable it in CMake GUIs like ccmake.
 
 option(
     DISABLE_PLUGINS_BY_DEFAULT
     "If set to YES only plugins that are specifically enabled will be compiled"
     NO)
-# This option should not show up in cmake GUIs like ccmake where all
+# This option should not show up in CMake GUIs like ccmake where all
 # plugins are enabled or disabled manually.
 mark_as_advanced(DISABLE_PLUGINS_BY_DEFAULT)
+
+fast_downward_plugin(
+    NAME CORE_SOURCES
+    HELP "Core source files"
+    SOURCES
+        planner
+
+        abstract_task
+        axioms
+        causal_graph
+        equivalence_relation
+        evaluation_context
+        evaluation_result
+        global_operator
+        globals
+        global_state
+        heuristic_cache
+        heuristic
+        int_packer
+        operator_cost
+        option_parser
+        option_parser_util
+        per_state_information
+        plugin
+        pruning_method
+        priority_queue
+        sampling
+        scalar_evaluator
+        search_engine
+        search_node_info
+        search_progress
+        search_space
+        search_statistics
+        segmented_vector
+        state_id
+        state_registry
+        task_proxy
+        task_tools
+        variable_order_finder
+
+        open_lists/open_list
+        open_lists/open_list_factory
+    DEPENDS SUCCESSOR_GENERATOR
+    CORE_PLUGIN
+)
+
+fast_downward_plugin(
+    NAME SUCCESSOR_GENERATOR
+    HELP "Successor generator"
+    SOURCES
+        task_utils/successor_generator
+        task_utils/successor_generator_factory
+        task_utils/successor_generator_internals
+    DEPENDENCY_ONLY
+)
+
+fast_downward_plugin(
+    NAME ALTERNATION_OPEN_LIST
+    HELP "Open list that alternates between underlying open lists in a round-robin manner"
+    SOURCES
+        open_lists/alternation_open_list
+)
+
+fast_downward_plugin(
+    NAME BEST_FIRST_OPEN_LIST
+    HELP "Open list that selects the best element according to a single evaluation function"
+    SOURCES
+        open_lists/standard_scalar_open_list
+)
+
+fast_downward_plugin(
+    NAME EPSILON_GREEDY_OPEN_LIST
+    HELP "Open list that chooses an entry randomly with probability epsilon"
+    SOURCES
+        open_lists/epsilon_greedy_open_list
+)
+
+fast_downward_plugin(
+    NAME PARETO_OPEN_LIST
+    HELP "Pareto open list"
+    SOURCES
+        open_lists/pareto_open_list
+)
+
+fast_downward_plugin(
+    NAME TIEBREAKING_OPEN_LIST
+    HELP "Tiebreaking open list"
+    SOURCES
+        open_lists/tiebreaking_open_list
+)
+
+fast_downward_plugin(
+    NAME TYPE_BASED_OPEN_LIST
+    HELP "Type-based open list"
+    SOURCES
+        open_lists/type_based_open_list
+)
 
 fast_downward_plugin(
     NAME OPTIONS
     HELP "Option parsing and plugin definition"
     SOURCES
-        options/any.h
-        options/bounds.cc
-        options/doc_printer.cc
-        options/doc_store.cc
-        options/errors.cc
-        options/option_parser.cc
-        options/options.cc
-        options/parse_tree.cc
-        options/predefinitions.cc
-        options/plugin.cc
-        options/registries.cc
-        options/synergy.cc
-        options/token_parser.cc
-        options/type_documenter.cc
-        options/type_namer.cc
+        options/any
+        options/bounds
+        options/doc_printer
+        options/doc_store
+        options/errors
+        options/option_parser
+        options/options
+        options/parse_tree
+        options/predefinitions
+        options/plugin
+        options/registries
+        options/synergy
+        options/token_parser
+        options/type_documenter
+        options/type_namer
     CORE_PLUGIN
 )
 
@@ -125,21 +165,21 @@ fast_downward_plugin(
     NAME UTILS
     HELP "System utilities"
     SOURCES
-        utils/collections.h
-        utils/countdown_timer.cc
-        utils/dynamic_bitset.h
-        utils/hash.h
-        utils/language.h
-        utils/logging.cc
-        utils/markup.cc
-        utils/math.cc
-        utils/memory.cc
-        utils/rng.cc
-        utils/rng_options.cc
-        utils/system.cc
-        utils/system_unix.cc
-        utils/system_windows.cc
-        utils/timer.cc
+        utils/collections
+        utils/countdown_timer
+        utils/dynamic_bitset
+        utils/hash
+        utils/language
+        utils/logging
+        utils/markup
+        utils/math
+        utils/memory
+        utils/rng
+        utils/rng_options
+        utils/system
+        utils/system_unix
+        utils/system_windows
+        utils/timer
     CORE_PLUGIN
 )
 
@@ -147,28 +187,28 @@ fast_downward_plugin(
     NAME CONST_EVALUATOR
     HELP "The constant evaluator"
     SOURCES
-        evaluators/const_evaluator.cc
+        evaluators/const_evaluator
 )
 
 fast_downward_plugin(
     NAME G_EVALUATOR
     HELP "The g-evaluator"
     SOURCES
-        evaluators/g_evaluator.cc
+        evaluators/g_evaluator
 )
 
 fast_downward_plugin(
     NAME COMBINING_EVALUATOR
     HELP "The combining evaluator"
     SOURCES
-        evaluators/combining_evaluator.cc
+        evaluators/combining_evaluator
 )
 
 fast_downward_plugin(
     NAME MAX_EVALUATOR
     HELP "The max evaluator"
     SOURCES
-        evaluators/max_evaluator.cc
+        evaluators/max_evaluator
     DEPENDS COMBINING_EVALUATOR
 )
 
@@ -176,21 +216,21 @@ fast_downward_plugin(
     NAME PREF_EVALUATOR
     HELP "The pref evaluator"
     SOURCES
-        evaluators/pref_evaluator.cc
+        evaluators/pref_evaluator
 )
 
 fast_downward_plugin(
     NAME WEIGHTED_EVALUATOR
     HELP "The weighted evaluator"
     SOURCES
-        evaluators/weighted_evaluator.cc
+        evaluators/weighted_evaluator
 )
 
 fast_downward_plugin(
     NAME SUM_EVALUATOR
     HELP "The sum evaluator"
     SOURCES
-        evaluators/sum_evaluator.cc
+        evaluators/sum_evaluator
     DEPENDS COMBINING_EVALUATOR
 )
 
@@ -198,14 +238,14 @@ fast_downward_plugin(
     NAME NULL_PRUNING_METHOD
     HELP "Pruning method that does nothing"
     SOURCES
-        pruning/null_pruning_method.cc
+        pruning/null_pruning_method
 )
 
 fast_downward_plugin(
     NAME STUBBORN_SETS
     HELP "Base class for all stubborn set partial order reduction methods"
     SOURCES
-        pruning/stubborn_sets.cc
+        pruning/stubborn_sets
     DEPENDENCY_ONLY
 )
 
@@ -213,7 +253,7 @@ fast_downward_plugin(
     NAME STUBBORN_SETS_SIMPLE
     HELP "Stubborn sets simple"
     SOURCES
-        pruning/stubborn_sets_simple.cc
+        pruning/stubborn_sets_simple
     DEPENDS STUBBORN_SETS
 )
 
@@ -221,7 +261,7 @@ fast_downward_plugin(
     NAME StubbornSetsEC
     HELP "Stubborn set method that dominates expansion core"
     SOURCES
-        pruning/stubborn_sets_ec.cc
+        pruning/stubborn_sets_ec
     DEPENDS STUBBORN_SETS
 )
 
@@ -229,7 +269,7 @@ fast_downward_plugin(
     NAME SEARCH_COMMON
     HELP "Basic classes used for all search engines"
     SOURCES
-        search_engines/search_common.cc
+        search_engines/search_common
     DEPENDS G_EVALUATOR SUM_EVALUATOR WEIGHTED_EVALUATOR
     DEPENDENCY_ONLY
 )
@@ -238,7 +278,7 @@ fast_downward_plugin(
     NAME EAGER_SEARCH
     HELP "Eager search algorithm"
     SOURCES
-        search_engines/eager_search.cc
+        search_engines/eager_search
     DEPENDS SEARCH_COMMON NULL_PRUNING_METHOD
 )
 
@@ -246,7 +286,7 @@ fast_downward_plugin(
     NAME ENFORCED_HILL_CLIMBING_SEARCH
     HELP "Lazy enforced hill-climbing search algorithm"
     SOURCES
-        search_engines/enforced_hill_climbing_search.cc
+        search_engines/enforced_hill_climbing_search
     DEPENDS SEARCH_COMMON PREF_EVALUATOR G_EVALUATOR
 )
 
@@ -254,14 +294,14 @@ fast_downward_plugin(
     NAME ITERATED_SEARCH
     HELP "Iterated search algorithm"
     SOURCES
-        search_engines/iterated_search.cc
+        search_engines/iterated_search
 )
 
 fast_downward_plugin(
     NAME LAZY_SEARCH
     HELP "Lazy search algorithm"
     SOURCES
-        search_engines/lazy_search.cc
+        search_engines/lazy_search
     DEPENDS SEARCH_COMMON
 )
 
@@ -269,8 +309,8 @@ fast_downward_plugin(
     NAME LP_SOLVER
     HELP "Interface to an LP solver"
     SOURCES
-        lp/lp_internals.cc
-        lp/lp_solver.cc
+        lp/lp_internals
+        lp/lp_solver
     DEPENDENCY_ONLY
 )
 
@@ -278,7 +318,7 @@ fast_downward_plugin(
     NAME RELAXATION_HEURISTIC
     HELP "The base class for relaxation heuristics"
     SOURCES
-        heuristics/relaxation_heuristic.cc
+        heuristics/relaxation_heuristic
     DEPENDENCY_ONLY
 )
 
@@ -286,7 +326,7 @@ fast_downward_plugin(
     NAME ADDITIVE_HEURISTIC
     HELP "The additive heuristic"
     SOURCES
-        heuristics/additive_heuristic.cc
+        heuristics/additive_heuristic
     DEPENDS RELAXATION_HEURISTIC
 )
 
@@ -294,22 +334,22 @@ fast_downward_plugin(
     NAME BLIND_SEARCH_HEURISTIC
     HELP "The 'blind search' heuristic"
     SOURCES
-        heuristics/blind_search_heuristic.cc
+        heuristics/blind_search_heuristic
 )
 
 fast_downward_plugin(
     NAME CONTEXT_ENHANCED_ADDITIVE_HEURISTIC
     HELP "The context-enhanced additive heuristic"
     SOURCES
-        heuristics/cea_heuristic.cc
+        heuristics/cea_heuristic
     DEPENDS DOMAIN_TRANSITION_GRAPH
 )
 
 fast_downward_plugin(
     NAME CG_HEURISTIC
     HELP "The causal graph heuristic"
-    SOURCES heuristics/cg_heuristic.cc
-            heuristics/cg_cache.cc
+    SOURCES heuristics/cg_heuristic
+            heuristics/cg_cache
     DEPENDS DOMAIN_TRANSITION_GRAPH
 )
 
@@ -317,7 +357,7 @@ fast_downward_plugin(
     NAME DOMAIN_TRANSITION_GRAPH
     HELP "DTGs used by cg and cea heuristic"
     SOURCES
-        domain_transition_graph.cc
+        domain_transition_graph
     DEPENDENCY_ONLY
 )
 
@@ -325,7 +365,7 @@ fast_downward_plugin(
     NAME FF_HEURISTIC
     HELP "The FF heuristic (an implementation of the RPG heuristic)"
     SOURCES
-        heuristics/ff_heuristic.cc
+        heuristics/ff_heuristic
     DEPENDS ADDITIVE_HEURISTIC
 )
 
@@ -333,29 +373,29 @@ fast_downward_plugin(
     NAME GOAL_COUNT_HEURISTIC
     HELP "The goal-counting heuristic"
     SOURCES
-        heuristics/goal_count_heuristic.cc
+        heuristics/goal_count_heuristic
 )
 
 fast_downward_plugin(
     NAME HM_HEURISTIC
     HELP "The h^m heuristic"
     SOURCES
-        heuristics/hm_heuristic.cc
+        heuristics/hm_heuristic
 )
 
 fast_downward_plugin(
     NAME LANDMARK_CUT_HEURISTIC
     HELP "The LM-cut heuristic"
     SOURCES
-        heuristics/lm_cut_heuristic.cc
-        heuristics/lm_cut_landmarks.cc
+        heuristics/lm_cut_heuristic
+        heuristics/lm_cut_landmarks
 )
 
 fast_downward_plugin(
     NAME MAX_HEURISTIC
     HELP "The Max heuristic"
     SOURCES
-        heuristics/max_heuristic.cc
+        heuristics/max_heuristic
     DEPENDS RELAXATION_HEURISTIC
 )
 
@@ -363,9 +403,9 @@ fast_downward_plugin(
     NAME CORE_TASKS
     HELP "Core task transformations"
     SOURCES
-        tasks/cost_adapted_task.cc
-        tasks/delegating_task.cc
-        tasks/root_task.cc
+        tasks/cost_adapted_task
+        tasks/delegating_task
+        tasks/root_task
     CORE_PLUGIN
 )
 
@@ -373,10 +413,10 @@ fast_downward_plugin(
     NAME EXTRA_TASKS
     HELP "Non-core task transformations"
     SOURCES
-        tasks/domain_abstracted_task.cc
-        tasks/domain_abstracted_task_factory.cc
-        tasks/modified_goals_task.cc
-        tasks/modified_operator_costs_task.cc
+        tasks/domain_abstracted_task
+        tasks/domain_abstracted_task_factory
+        tasks/modified_goals_task
+        tasks/modified_operator_costs_task
     DEPENDENCY_ONLY
 )
 
@@ -384,19 +424,19 @@ fast_downward_plugin(
     NAME CEGAR
     HELP "Plugin containing the code for CEGAR heuristics"
     SOURCES
-        cegar/abstraction.cc
-        cegar/abstract_search.cc
-        cegar/abstract_state.cc
-        cegar/additive_cartesian_heuristic.cc
-        cegar/arc.cc
-        cegar/cartesian_heuristic_function.cc
-        cegar/cost_saturation.cc
-        cegar/domains.cc
-        cegar/refinement_hierarchy.cc
-        cegar/split_selector.cc
-        cegar/subtask_generators.cc
-        cegar/utils.cc
-        cegar/utils_landmarks.cc
+        cegar/abstraction
+        cegar/abstract_search
+        cegar/abstract_state
+        cegar/additive_cartesian_heuristic
+        cegar/arc
+        cegar/cartesian_heuristic_function
+        cegar/cost_saturation
+        cegar/domains
+        cegar/refinement_hierarchy
+        cegar/split_selector
+        cegar/subtask_generators
+        cegar/utils
+        cegar/utils_landmarks
     DEPENDS ADDITIVE_HEURISTIC EXTRA_TASKS LANDMARKS
 )
 
@@ -404,57 +444,57 @@ fast_downward_plugin(
     NAME MAS_HEURISTIC
     HELP "The Merge-and-Shrink heuristic"
     SOURCES
-        merge_and_shrink/distances.cc
-        merge_and_shrink/factored_transition_system.cc
-        merge_and_shrink/fts_factory.cc
-        merge_and_shrink/heuristic_representation.cc
-        merge_and_shrink/label_equivalence_relation.cc
-        merge_and_shrink/label_reduction.cc
-        merge_and_shrink/labels.cc
-        merge_and_shrink/merge_and_shrink_heuristic.cc
-        merge_and_shrink/merge_scoring_function.cc
-        merge_and_shrink/merge_scoring_function_dfp.cc
-        merge_and_shrink/merge_scoring_function_goal_relevance.cc
-        merge_and_shrink/merge_scoring_function_single_random.cc
-        merge_and_shrink/merge_scoring_function_total_order.cc
-        merge_and_shrink/merge_selector.cc
-        merge_and_shrink/merge_selector_score_based_filtering.cc
-        merge_and_shrink/merge_strategy.cc
-        merge_and_shrink/merge_strategy_aliases.cc
-        merge_and_shrink/merge_strategy_factory.cc
-        merge_and_shrink/merge_strategy_factory_precomputed.cc
-        merge_and_shrink/merge_strategy_factory_stateless.cc
-        merge_and_shrink/merge_strategy_precomputed.cc
-        merge_and_shrink/merge_strategy_stateless.cc
-        merge_and_shrink/merge_tree.cc
-        merge_and_shrink/merge_tree_factory.cc
-        merge_and_shrink/merge_tree_factory_linear.cc
-        merge_and_shrink/shrink_bisimulation.cc
-        merge_and_shrink/shrink_bucket_based.cc
-        merge_and_shrink/shrink_fh.cc
-        merge_and_shrink/shrink_random.cc
-        merge_and_shrink/shrink_strategy.cc
-        merge_and_shrink/transition_system.cc
-        merge_and_shrink/types.cc
+        merge_and_shrink/distances
+        merge_and_shrink/factored_transition_system
+        merge_and_shrink/fts_factory
+        merge_and_shrink/heuristic_representation
+        merge_and_shrink/label_equivalence_relation
+        merge_and_shrink/label_reduction
+        merge_and_shrink/labels
+        merge_and_shrink/merge_and_shrink_heuristic
+        merge_and_shrink/merge_scoring_function
+        merge_and_shrink/merge_scoring_function_dfp
+        merge_and_shrink/merge_scoring_function_goal_relevance
+        merge_and_shrink/merge_scoring_function_single_random
+        merge_and_shrink/merge_scoring_function_total_order
+        merge_and_shrink/merge_selector
+        merge_and_shrink/merge_selector_score_based_filtering
+        merge_and_shrink/merge_strategy
+        merge_and_shrink/merge_strategy_aliases
+        merge_and_shrink/merge_strategy_factory
+        merge_and_shrink/merge_strategy_factory_precomputed
+        merge_and_shrink/merge_strategy_factory_stateless
+        merge_and_shrink/merge_strategy_precomputed
+        merge_and_shrink/merge_strategy_stateless
+        merge_and_shrink/merge_tree
+        merge_and_shrink/merge_tree_factory
+        merge_and_shrink/merge_tree_factory_linear
+        merge_and_shrink/shrink_bisimulation
+        merge_and_shrink/shrink_bucket_based
+        merge_and_shrink/shrink_fh
+        merge_and_shrink/shrink_random
+        merge_and_shrink/shrink_strategy
+        merge_and_shrink/transition_system
+        merge_and_shrink/types
 )
 
 fast_downward_plugin(
     NAME LANDMARKS
     HELP "Plugin containing the code to reason with landmarks"
     SOURCES
-        landmarks/exploration.cc
-        landmarks/h_m_landmarks.cc
-        landmarks/lama_ff_synergy.cc
-        landmarks/landmark_cost_assignment.cc
-        landmarks/landmark_count_heuristic.cc
-        landmarks/landmark_factory.cc
-        landmarks/landmark_factory_rpg_exhaust.cc
-        landmarks/landmark_factory_rpg_sasp.cc
-        landmarks/landmark_factory_zhu_givan.cc
-        landmarks/landmark_graph.cc
-        landmarks/landmark_graph_merged.cc
-        landmarks/landmark_status_manager.cc
-        landmarks/util.cc
+        landmarks/exploration
+        landmarks/h_m_landmarks
+        landmarks/lama_ff_synergy
+        landmarks/landmark_cost_assignment
+        landmarks/landmark_count_heuristic
+        landmarks/landmark_factory
+        landmarks/landmark_factory_rpg_exhaust
+        landmarks/landmark_factory_rpg_sasp
+        landmarks/landmark_factory_zhu_givan
+        landmarks/landmark_graph
+        landmarks/landmark_graph_merged
+        landmarks/landmark_status_manager
+        landmarks/util
     DEPENDS LP_SOLVER
 )
 
@@ -462,11 +502,11 @@ fast_downward_plugin(
     NAME OPERATOR_COUNTING
     HELP "Plugin containing the code for operator counting heuristics"
     SOURCES
-        operator_counting/constraint_generator.cc
-        operator_counting/lm_cut_constraints.cc
-        operator_counting/operator_counting_heuristic.cc
-        operator_counting/pho_constraints.cc
-        operator_counting/state_equation_constraints.cc
+        operator_counting/constraint_generator
+        operator_counting/lm_cut_constraints
+        operator_counting/operator_counting_heuristic
+        operator_counting/pho_constraints
+        operator_counting/state_equation_constraints
     DEPENDS LP_SOLVER LANDMARK_CUT_HEURISTIC PDBS
 )
 
@@ -474,42 +514,42 @@ fast_downward_plugin(
     NAME PDBS
     HELP "Plugin containing the code for PDBs"
     SOURCES
-        pdbs/canonical_pdbs.cc
-        pdbs/canonical_pdbs_heuristic.cc
-        pdbs/dominance_pruning.cc
-        pdbs/incremental_canonical_pdbs.cc
-        pdbs/match_tree.cc
-        pdbs/max_additive_pdb_sets.cc
-        pdbs/max_cliques.cc
-        pdbs/pattern_collection_information.cc
-        pdbs/pattern_database.cc
-        pdbs/pattern_collection_generator_combo.cc
-        pdbs/pattern_collection_generator_genetic.cc
-        pdbs/pattern_collection_generator_hillclimbing.cc
-        pdbs/pattern_collection_generator_manual.cc
-        pdbs/pattern_collection_generator_systematic.cc
-        pdbs/pattern_generator_greedy.cc
-        pdbs/pattern_generator_manual.cc
-        pdbs/pattern_generator.cc
-        pdbs/pdb_heuristic.cc
-        pdbs/types.cc
-        pdbs/validation.cc
-        pdbs/zero_one_pdbs.cc
-        pdbs/zero_one_pdbs_heuristic.cc
+        pdbs/canonical_pdbs
+        pdbs/canonical_pdbs_heuristic
+        pdbs/dominance_pruning
+        pdbs/incremental_canonical_pdbs
+        pdbs/match_tree
+        pdbs/max_additive_pdb_sets
+        pdbs/max_cliques
+        pdbs/pattern_collection_information
+        pdbs/pattern_database
+        pdbs/pattern_collection_generator_combo
+        pdbs/pattern_collection_generator_genetic
+        pdbs/pattern_collection_generator_hillclimbing
+        pdbs/pattern_collection_generator_manual
+        pdbs/pattern_collection_generator_systematic
+        pdbs/pattern_generator_greedy
+        pdbs/pattern_generator_manual
+        pdbs/pattern_generator
+        pdbs/pdb_heuristic
+        pdbs/types
+        pdbs/validation
+        pdbs/zero_one_pdbs
+        pdbs/zero_one_pdbs_heuristic
 )
 
 fast_downward_plugin(
     NAME POTENTIALS
     HELP "Plugin containing the code for potential heuristics"
     SOURCES
-        potentials/diverse_potential_heuristics.cc
-        potentials/potential_function.cc
-        potentials/potential_heuristic.cc
-        potentials/potential_max_heuristic.cc
-        potentials/potential_optimizer.cc
-        potentials/sample_based_potential_heuristics.cc
-        potentials/single_potential_heuristics.cc
-        potentials/util.cc
+        potentials/diverse_potential_heuristics
+        potentials/potential_function
+        potentials/potential_heuristic
+        potentials/potential_max_heuristic
+        potentials/potential_optimizer
+        potentials/sample_based_potential_heuristics
+        potentials/single_potential_heuristics
+        potentials/util
     DEPENDS LP_SOLVER
 )
 
@@ -520,74 +560,73 @@ fast_downward_plugin(
 )
 
 fast_downward_plugin(
-    NAME SUBGOAL_COUNT
-    HELP "Subgoal count heuristic and novelty-bounded lookahead search"
-    SOURCES
-        heuristics/subgoal_count_heuristic.cc
-        search_engines/gbfs_relaxed_subgoals_lookahead.cc
-)
-
-fast_downward_plugin(
-    NAME yahsp_lookahead
-    HELP "Lazy search with YAHSP-style lookahead"
-    SOURCES
-        search_engines/gbfs_yahsp_lookahead.cc
-)
-
-fast_downward_plugin(
     NAME CONJUNCTIONS
     HELP "Plugin containing the code for partial delete relaxation heuristics with explicit conjunctions"
     SOURCES
-        conjunctions/conflict_extraction.cc
-        conjunctions/conjunctions.h
-        conjunctions/conjunctions_heuristic.cc
-        conjunctions/conjunctions_subgoal_count_heuristic.cc
-        conjunctions/conjunctions_subset_generator.cc
-        conjunctions/generation_strategy.cc
-        conjunctions/novelty_heuristic.cc
-        conjunctions/novelty_linker.cc
-        conjunctions/utils.h
-        conjunctions/search_engines/enforced_hill_climbing_search.cc
-        conjunctions/search_engines/enforced_hill_climbing_novelty_search.cc
-        conjunctions/search_engines/ipc18_iterated_search.cc
-        conjunctions/search_engines/lazy_search.cc
-        conjunctions/search_engines/lazy_search_min_set.cc
-        conjunctions/search_engines/lazy_search_min_set_continue.cc
-        conjunctions/search_engines/lazy_search_min_set_restart.cc
-        conjunctions/search_engines/lazy_search_relaxed_subgoals_lookahead.cc
-        conjunctions/search_engines/lazy_search_simple.cc
-        conjunctions/search_engines/online_learning_search_engine.cc
-        conjunctions/search_engines/lazy_search_yahsp_lookahead.cc
-        conjunctions/search_engines/yahsp_lookahead.cc
-    DEPENDS BOOST
+        # hCFF heuristic and conjunction utilities
+        conjunctions/conflict_extraction
+        conjunctions/conjunctions
+        conjunctions/conjunctions_heuristic
+        conjunctions/conjunctions_subgoal_count_heuristic
+        conjunctions/conjunctions_subset_generator
+        conjunctions/generation_strategy
+        conjunctions/novelty_heuristic
+        conjunctions/novelty_linker
+        conjunctions/utils
+
+        # search engines with online refinement
+        conjunctions/search_engines/enforced_hill_climbing_novelty_relaxed_subgoals_search
+        conjunctions/search_engines/enforced_hill_climbing_novelty_relaxed_subgoals_search_lazy
+        conjunctions/search_engines/enforced_hill_climbing_novelty_search
+        conjunctions/search_engines/enforced_hill_climbing_search
+        conjunctions/search_engines/ipc18_iterated_search
+        conjunctions/search_engines/lazy_search
+        conjunctions/search_engines/lazy_search_local_lookahead
+        conjunctions/search_engines/lazy_search_min_set
+        conjunctions/search_engines/lazy_search_min_set_continue
+        conjunctions/search_engines/lazy_search_min_set_restart
+        conjunctions/search_engines/lazy_search_simple
+        conjunctions/search_engines/online_learning_search_engine
+        conjunctions/search_engines/relaxed_plan_search
+
+        # GBFS with lookahead based on relaxed subgoals and YAHSP
+        conjunctions/search_engines/lazy_search_dual_lookahead
+        conjunctions/search_engines/lazy_search_relaxed_subgoals_lookahead
+        conjunctions/search_engines/lazy_search_relaxed_subgoals_lookahead_bounded_expansions
+        conjunctions/search_engines/lazy_search_yahsp_lookahead
+        conjunctions/search_engines/yahsp_lookahead
+        heuristics/subgoal_count_heuristic
+        search_engines/gbfs_relaxed_subgoals_lookahead
+        search_engines/gbfs_yahsp_lookahead
+    DEPENDS BOOST SEARCH_COMMON PREF_EVALUATOR BEST_FIRST_OPEN_LIST TIEBREAKING_OPEN_LIST ALTERNATION_OPEN_LIST
 )
 
 fast_downward_plugin(
     NAME GREY
     HELP "Plugin containing the code for grey planning heuristics"
     SOURCES
-        grey/DAG_new_agenda.cc
-        grey/dtg_operators.cc
-        grey/grey_heuristic.cc
-        grey/grey_initial_state_search.cc
-        grey/grey_operator.cc
-        grey/variable_ordering.cc
-        grey/graph_algorithms/scc.cc
-        grey/graph_algorithms/topological_sort.cc
-        grey/graph_algorithms/transitive_closure.cc
-        grey/learning/PDB_state_space_sample.cc
-        grey/learning/probe_state_space_sample.cc
-        grey/learning/state_space_sample.cc
+        grey/DAG_new_agenda
+        grey/dtg_operators
+        grey/graph_algorithms/scc
+        grey/graph_algorithms/topological_sort
+        grey/graph_algorithms/transitive_closure
+        grey/grey_heuristic
+        grey/grey_initial_state_search
+        grey/grey_operator
+        grey/learning/PDB_state_space_sample
+        grey/learning/probe_state_space_sample
+        grey/learning/state_space_sample
+        grey/variable_ordering
     DEPENDS ADDITIVE_HEURISTIC
 )
 
 fast_downward_plugin(
-    NAME red_black
+    NAME RED_BLACK
     HELP "Plugin containing the code for red-black planning heuristics"
     SOURCES
-        red_black/dtg_operators.cc
-        red_black/red_black_DAG_fact_following_heuristic.cc
-        red_black/red_black_operator.cc
+        red_black/dtg_operators
+        red_black/red_black_DAG_fact_following_heuristic
+        red_black/red_black_operator
     DEPENDS ADDITIVE_HEURISTIC GREY
 )
 

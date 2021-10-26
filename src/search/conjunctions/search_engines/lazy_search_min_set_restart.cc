@@ -61,7 +61,7 @@ auto LazySearchMinSetRestart<generalized, individual_min>::restart() -> SearchSt
 	this->reset_min();
 	if (this->current_eval_context.is_heuristic_infinite(this->conjunctions_heuristics.front())) {
 		std::cout << "Initial state is a dead end, no solution" << std::endl;
-		utils::exit_with(utils::ExitCode::UNSOLVABLE);
+		utils::exit_with(utils::ExitCode::SEARCH_UNSOLVABLE);
 	}
 	auto node = current_search_space->get_node(this->current_state);
 	node.open_initial();

@@ -46,17 +46,17 @@ int CostAdaptedTask::get_operator_cost(int index, bool is_axiom) const {
             return original_cost + 1;
     default:
         cerr << "Unknown cost type" << endl;
-        utils::exit_with(ExitCode::CRITICAL_ERROR);
+        utils::exit_with(ExitCode::SEARCH_CRITICAL_ERROR);
     }
 }
 
 
 static shared_ptr<AbstractTask> _parse(OptionParser &parser) {
+    add_cost_type_option_to_parser(parser);
     parser.add_option<shared_ptr<AbstractTask>>(
         "transform",
         "Parent task transformation",
         "no_transform");
-    add_cost_type_option_to_parser(parser);
     Options opts = parser.parse();
     if (parser.dry_run())
         return nullptr;

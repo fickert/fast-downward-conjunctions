@@ -4,7 +4,7 @@
 
 #include <string>
 #include <vector>
-using namespace std;
+#include <fstream>
 
 #include "helper_functions.h"
 #include "state.h"
@@ -15,6 +15,7 @@ using namespace std;
 #include "successor_generator.h"
 #include "domain_transition_graph.h"
 
+using namespace std;
 
 static const int SAS_FILE_VERSION = 3;
 static const int PRE_FILE_VERSION = SAS_FILE_VERSION;
@@ -168,7 +169,7 @@ void generate_cpp_input(const vector<Variable *> &ordered_vars,
        since the planner doesn't handle it specially any more anyway. */
 
     ofstream outfile;
-    outfile.open("output", ios::out);
+    outfile.open("output.sas", ios::out);
 
     outfile << "begin_version" << endl;
     outfile << PRE_FILE_VERSION << endl;
@@ -212,6 +213,48 @@ void generate_cpp_input(const vector<Variable *> &ordered_vars,
     outfile << axioms.size() << endl;
     for (const Axiom &axiom : axioms)
         axiom.generate_cpp_input(outfile);
+
+    outfile.close();
+}
+void generate_unsolvable_cpp_input() {
+    ofstream outfile;
+    outfile.open("output.sas", ios::out);
+    outfile << "begin_version" << endl;
+    outfile << PRE_FILE_VERSION << endl;
+    outfile << "end_version" << endl;
+
+    outfile << "begin_metric" << endl << "1" << endl << "end_metric" << endl;
+
+    //variables
+    outfile << "1" << endl << "begin_variable" << endl
+            << "var0" << endl
+            << "-1" << endl
+            << "2" << endl
+            << "Atom dummy(val1)" << endl
+            << "Atom dummy(val2)" << endl
+            << "end_variable" << endl;
+
+    //Mutexes
+    outfile << "0" << endl;
+
+    //Initial state and goal
+    outfile << "begin_state" << endl << "0" << endl << "end_state" << endl;
+    outfile << "begin_goal" << endl << "1" << endl << "0 1" << endl << "end_goal" << endl;
+
+    //Operators
+    outfile << "0" << endl;
+
+    //Axioms
+    outfile << "0" << endl;
+
+    outfile << "begin_SG" << endl;
+    outfile << "check 0" << endl;
+    outfile << "end_SG" << endl;
+
+    outfile << "begin_DTG" << endl << "0" << endl << "0" << endl
+            << "end_DTG" << endl;
+
+    outfile << "begin_CG" << endl << "0" << endl << "end_CG" << endl;
 
     outfile.close();
 }

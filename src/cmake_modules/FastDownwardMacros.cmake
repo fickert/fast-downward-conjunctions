@@ -8,25 +8,24 @@ macro(fast_downward_set_compiler_flags)
         include(CheckCXXCompilerFlag)
         check_cxx_compiler_flag( "-std=c++17" CXX17_FOUND )
         if(CXX17_FOUND)
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
         else()
-            check_cxx_compiler_flag( "-std=c++14" CXX14_FOUND )
-            if(CXX14_FOUND)
-                set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
-            else()
-                message(FATAL_ERROR "${CMAKE_CXX_COMPILER} does not support C++14, please use a different compiler")
-            endif()
+            message(FATAL_ERROR "${CMAKE_CXX_COMPILER} does not support C++17, please use a different compiler")
         endif()
+
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -Werror")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -Wnon-virtual-dtor")
 
         ## Configuration-specific flags
         set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -fomit-frame-pointer")
         set(CMAKE_CXX_FLAGS_DEBUG "-O3")
+        if(USE_GLIBCXX_DEBUG)
+            set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -D_GLIBCXX_DEBUG")
+        endif()
         set(CMAKE_CXX_FLAGS_PROFILE "-O3 -pg")
     elseif(MSVC)
-        # We force linking to be static because the dynamically linked code is
-        # about 10% slower on Linux (see issue67). On Windows this is a compiler
+        # We force linking to be static on Windows because this makes compiling OSI simpler
+        # (dynamic linking would require DLLs for OSI). On Windows this is a compiler
         # setting, not a linker setting.
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
         string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
@@ -36,10 +35,9 @@ macro(fast_downward_set_compiler_flags)
         # Enable exceptions.
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
 
-        # Use warning level 4 (/W4) and treat warnings as errors (/WX)
-        # -Wall currently detects too many warnings outside of our code to be useful.
+        # Use warning level 4 (/W4).
+        # /Wall currently detects too many warnings outside of our code to be useful.
         string(REPLACE "/W3" "/W4" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX")
 
         # Disable warnings that currently trigger in the code until we fix them.
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800") # forcing value to bool
@@ -48,6 +46,7 @@ macro(fast_downward_set_compiler_flags)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4100") # unreferenced formal parameter (in OSI)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4127") # conditional expression is constant (in tree.hh and in our code)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4244") # conversion with possible loss of data
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4309") # truncation of constant value (in OSI, see issue857)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4702") # unreachable code
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4239") # nonstandard extension used
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4996") # function call with parameters that may be unsafe
@@ -70,36 +69,8 @@ macro(fast_downward_set_compiler_flags)
 endmacro()
 
 macro(fast_downward_set_linker_flags)
-    # We try to force linking to be static because the dynamically linked code is
-    # about 10% slower on Linux (see issue67).
-
-    if(APPLE)
-        # Static linking is not supported by Apple.
-        # https://developer.apple.com/library/mac/qa/qa1118/_index.html
+    if(UNIX)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g")
-    else()
-        # Any libs we build should be static.
-        set(BUILD_SHARED_LIBS FALSE)
-    
-        # Any libraries that are implicitly added to the end of the linker
-        # command should be linked statically.
-        set(LINK_SEARCH_END_STATIC TRUE)
-    
-        # Do not add "-rdynamic" flag.
-        set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
-        set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
-    
-        # Only look for static libraries (Windows does not support this).
-        if(UNIX)
-            set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
-        endif()
-    
-        # Set linker flags to link statically.
-        if(CMAKE_COMPILER_IS_GNUCXX)
-            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g -static -static-libgcc")
-        elseif(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -g -static -static-libstdc++")
-        endif()
     endif()
 endmacro()
 
@@ -137,55 +108,17 @@ macro(fast_downward_set_configuration_types)
     endif()
 endmacro()
 
-macro(fast_downward_set_bitwidth)
-    # Add -m32 to the compiler flags on Unix, unless ALLOW_64_BIT is set to true.
-    # This has to be done before defining the project.
-
-    # Since compiling for 32-bit works differently on each platform, we let
-    # users set up their own build environment and only check which one is
-    # used. Compiling a 64-bit version of the planner without explicitly
-    # settig ALLOW_64_BIT to true results in an error.
-    option(ALLOW_64_BIT "Allow to compile a 64-bit version." FALSE)
-
-    if(UNIX AND NOT ALLOW_64_BIT)
-        set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS OFF)
-
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32" CACHE STRING "c++ flags")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32" CACHE STRING "c flags")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -m32" CACHE STRING "linker flags")
-    endif()
-endmacro()
-
-macro(fast_downward_check_64_bit_option)
-    # The macro fast_downward_set_bitwidth
-    # adds -m32 to the compiler flags on Unix, unless ALLOW_64_BIT is
-    # set to true. If this done before defining a project, the tool
-    # chain will be set up for 32-bit and CMAKE_SIZEOF_VOID_P should be 4.
+macro(fast_downward_report_bitwidth)
     if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
-        if(ALLOW_64_BIT)
-            message(WARNING "Building for 32-bit but ALLOW_64_BIT is set. "
-            "Do not set ALLOW_64_BIT unless you are sure you want a 64-bit build. "
-            "See http://www.fast-downward.org/PlannerUsage#A64bit for details.")
-        else()
-            message(STATUS "Building for 32-bit.")
-        endif()
+        message(STATUS "Building for 32-bit.")
     elseif(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-        if(ALLOW_64_BIT)
-            message(STATUS "Building for 64-bit.")
-        else()
-            message(FATAL_ERROR "You are compiling the planner for 64-bit, "
-            "which is not recommended. "
-            "Use -DALLOW_64_BIT=true if you need a 64-bit build. "
-            "See http://www.fast-downward.org/PlannerUsage#A64bit for details.")
-        endif()
+        message(STATUS "Building for 64-bit.")
     else()
-        message(FATAL_ERROR, "Could not determine bitwidth. We recommend to "
-        "build the planner for 32-bit. "
-        "See http://www.fast-downward.org/PlannerUsage#A64bit for details.")
+        message(FATAL_ERROR, "Could not determine bitwidth.")
     endif()
 endmacro()
 
-function(fast_downward_add_headers_to_sources_list _SOURCES_LIST_VAR)
+function(fast_downward_add_existing_sources_to_list _SOURCES_LIST_VAR)
     set(_ALL_FILES)
     foreach(SOURCE_FILE ${${_SOURCES_LIST_VAR}})
         get_filename_component(_SOURCE_FILE_DIR ${SOURCE_FILE} PATH)
@@ -194,9 +127,11 @@ function(fast_downward_add_headers_to_sources_list _SOURCES_LIST_VAR)
         if (_SOURCE_FILE_DIR)
             set(_SOURCE_FILE_DIR "${_SOURCE_FILE_DIR}/")
         endif()
-        list(APPEND _ALL_FILES "${SOURCE_FILE}")
-        if (${_SOURCE_FILE_EXT} STREQUAL ".cc")
+        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_SOURCE_FILE_DIR}${_SOURCE_FILE_NAME}.h")
             list(APPEND _ALL_FILES "${_SOURCE_FILE_DIR}${_SOURCE_FILE_NAME}.h")
+        endif()
+        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_SOURCE_FILE_DIR}${_SOURCE_FILE_NAME}.cc")
+            list(APPEND _ALL_FILES "${_SOURCE_FILE_DIR}${_SOURCE_FILE_NAME}.cc")
         endif()
     endforeach()
     set(${_SOURCES_LIST_VAR} ${_ALL_FILES} PARENT_SCOPE)
@@ -214,7 +149,7 @@ function(fast_downward_plugin)
     if(NOT _PLUGIN_SOURCES AND NOT _PLUGIN_DEPENDENCY_ONLY)
         message(FATAL_ERROR "fast_downward_plugin: 'SOURCES' argument required if not DEPENDENCY_ONLY.")
     endif()
-    fast_downward_add_headers_to_sources_list(_PLUGIN_SOURCES)
+    fast_downward_add_existing_sources_to_list(_PLUGIN_SOURCES)
     # Check optional arguments.
     if(NOT _PLUGIN_DISPLAY_NAME)
         string(TOLOWER ${_PLUGIN_NAME} _PLUGIN_DISPLAY_NAME)

@@ -561,7 +561,7 @@ auto LazySearchMinSet<generalized, individual_min>::get_learning_target() const 
 		return EvaluationResult::INFTY;
 	default:
 		std::cerr << "Unknown learning target option." << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 

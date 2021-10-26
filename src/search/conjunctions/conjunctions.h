@@ -22,6 +22,8 @@ namespace conjunctions {
 
 using FactSet = std::vector<FactPair>;
 
+using cost_t = long long int;
+
 struct Conjunction;
 struct BSGNode;
 
@@ -71,7 +73,7 @@ struct CounterGroup {
 	// counts the number of unsatisfied regression conjunctions
 	int value;
 
-	int cost;
+	cost_t cost;
 
 	void reset() {
 		value = regression_conjunctions.size();
@@ -115,7 +117,7 @@ struct Conjunction {
 	// true in the current state
 	bool initially_true;
 
-	int cost;
+	cost_t cost;
 
 	// successors in the BSG
 	std::vector<int> required_by;

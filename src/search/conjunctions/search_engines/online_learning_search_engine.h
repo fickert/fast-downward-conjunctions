@@ -31,10 +31,11 @@ protected:
 
 	void start_search_timer() {
 		search_timer.reset();
-		next_print_time = statistics_interval;
+		next_print_time = search_timer() + statistics_interval;
 	}
 
 	void print_conjunctions_statistics(const ConjunctionsHeuristic &heuristic) const {
+		std::cout << "Conjunction growth: " << heuristic.get_conjunction_growth() << std::endl;
 		std::cout << "Counter growth: " << heuristic.get_counter_growth() << std::endl;
 		std::cout << "Counter size growth: " << heuristic.get_counter_size_growth() << std::endl;
 		std::cout << "Counter group growth: " << heuristic.get_counter_group_growth() << std::endl;
@@ -62,6 +63,7 @@ protected:
 		std::cout << "Learning time: " << learning_timer() << "s" << std::endl;
 		std::cout << "Max learning time: " << max_learning_time << "s" << std::endl;
 		print_conjunctions_statistics(heuristic);
+		conjunctions_strategy->print_statistics();
 		print_evaluations_per_second();
 	}
 

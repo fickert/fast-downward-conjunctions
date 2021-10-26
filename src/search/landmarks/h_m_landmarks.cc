@@ -595,7 +595,7 @@ HMLandmarks::HMLandmarks(const options::Options &opts)
     cout << "H_m_Landmarks(" << m_ << ")" << endl;
     if (!g_axioms.empty()) {
         cerr << "H_m_Landmarks do not support axioms" << endl;
-        utils::exit_with(ExitCode::UNSUPPORTED);
+        utils::exit_with(ExitCode::SEARCH_UNSUPPORTED);
     }
     // need this to be able to print propositions for debugging
     // already called in global.cc

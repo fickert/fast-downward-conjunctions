@@ -93,6 +93,18 @@ GlobalState StateRegistry::import_state(const GlobalState &state) {
     return lookup_state(insert_id_or_pop_state());
 }
 
+std::optional<GlobalState> StateRegistry::lookup_state(const GlobalState &state) {
+	if (&state.get_registry() == this)
+		return state;
+	state_data_pool.push_back(state.get_packed_buffer());
+	StateID id(state_data_pool.size() - 1);
+	const auto it = registered_states.find(id);
+	state_data_pool.pop_back();
+	if (it == std::end(registered_states))
+		return {};
+	return lookup_state(*it);
+}
+
 int StateRegistry::get_bins_per_state() const {
     return state_packer.get_num_bins();
 }

@@ -91,23 +91,25 @@ auto operator<<(std::ostream &out, const ConflictExtraction::ScoringMethod scori
 		return out << "LAST";
 	default:
 		std::cerr << "Unknown scoring method:" << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
 
-ConflictExtraction::ConflictExtraction(const options::Options &opts) :
-	conflict_extraction_algorithm(ConjunctionGenerationAlgorithm(opts.get_enum("conflict_extraction_algorithm"))),
-	max_conflicts(opts.get<int>("max_conflicts")),
-	parallel_conflict_priority(opts.get<int>("parallel_conflict_priority")),
-	optimize_priority(opts.get<bool>("optimize_priority")),
-	only_immediate_conflicts(opts.get<bool>("only_immediate_conflicts")),
-	scoring(opts.get_enum_list<ScoringMethod>("conflict_order")),
-	online_scoring(get_online_scoring(scoring, false)),
-	annotations_after_priority(get_online_scoring(scoring, !scoring.empty() && scoring.front() != ScoringMethod::PRIORITY)),
-	fewest_counters_estimation_threshold(opts.get<int>("fewest_counters_estimation_threshold")),
-	statistics(),
-	statistics_printer(opts.get<int>("statistics_interval") != -1 ? std::make_unique<TimedPrinter>(opts.get<int>("statistics_interval")) : nullptr) {
+ConflictExtraction::ConflictExtraction(const options::Options &opts)
+	: conflict_extraction_algorithm(ConjunctionGenerationAlgorithm(opts.get_enum("conflict_extraction_algorithm"))),
+	  max_conflicts(opts.get<int>("max_conflicts")),
+	  parallel_conflict_priority(opts.get<int>("parallel_conflict_priority")),
+	  optimize_priority(opts.get<bool>("optimize_priority")),
+	  only_immediate_conflicts(opts.get<bool>("only_immediate_conflicts")),
+	  scoring(opts.get_enum_list<ScoringMethod>("conflict_order")),
+	  online_scoring(get_online_scoring(scoring, false)),
+	  annotations_after_priority(get_online_scoring(scoring, !scoring.empty() && scoring.front() != ScoringMethod::PRIORITY)),
+	  fewest_counters_estimation_threshold(opts.get<int>("fewest_counters_estimation_threshold")),
+	  statistics(),
+	  statistics_interval(opts.get<int>("statistics_interval")),
+	  statistics_timer(),
+	  next_print_time(0) {
 	auto random_pos = std::find(std::begin(scoring), std::end(scoring), ScoringMethod::RANDOM);
 	if (random_pos != std::end(scoring) && random_pos != std::end(scoring) - 1)
 		std::cout << "WARNING: any tie breakers after RANDOM will be ignored." << std::endl;
@@ -170,7 +172,7 @@ auto ConflictExtraction::get_score(const Conjunction &c1, const Conjunction &c2,
 		return heuristic.get_rp_frequency(c1) + heuristic.get_rp_frequency(c2);
 	default:
 		std::cerr << "Unknown online scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -209,7 +211,7 @@ auto ConflictExtraction::get_score(const FactSet &facts, const ConjunctionsHeuri
 		return facts.size();
 	default:
 		std::cerr << "Unknown offline scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -221,7 +223,7 @@ auto ConflictExtraction::compare_scores(double score1, double score2, ScoringMet
 	case ScoringMethod::RANDOM:
 	case ScoringMethod::LAST:
 		std::cerr << "Comparison undefined for scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	case ScoringMethod::PRIORITY:
 	case ScoringMethod::RP_DISTANCE:
 	case ScoringMethod::SMALLEST_SIZE:
@@ -261,7 +263,7 @@ auto ConflictExtraction::compare_scores(double score1, double score2, ScoringMet
 		return compare_cost(score2, score1);
 	default:
 		std::cerr << "Unknown scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -270,7 +272,7 @@ auto ConflictExtraction::combine_scores(double score1, double score2, ScoringMet
 	case ScoringMethod::RANDOM:
 	case ScoringMethod::LAST:
 		std::cerr << "Combination undefined for scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	case ScoringMethod::MOST_OCCURENCES:
 		return score1 + score2;
 	case ScoringMethod::SMALLEST_SIZE:
@@ -311,7 +313,7 @@ auto ConflictExtraction::combine_scores(double score1, double score2, ScoringMet
 		return std::max(score1, score2);
 	default:
 		std::cerr << "Unknown scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
@@ -356,12 +358,13 @@ auto ConflictExtraction::is_online_scoring_method(ScoringMethod scoring) -> bool
 		return true;
 	default:
 		std::cerr << "Unknown scoring method: " << static_cast<int>(scoring) << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 }
 
 template<typename ConflictType>
 auto ConflictExtraction::generate_conflicts(const AbstractTask &task, BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, int count) -> std::vector<FactSet> {
+	statistics.timer.resume();
 	using CEHelper = ConflictExtractionHelper<ConflictType>;
 	auto actual_max_conflicts = scoring.empty() ? count : max_conflicts;
 	auto result = std::vector<FactSet>();
@@ -375,9 +378,10 @@ auto ConflictExtraction::generate_conflicts(const AbstractTask &task, BestSuppor
 		break;
 	default:
 		std::cerr << "Unknown conflict extraction algorithm." << std::endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
-	print_statistics();
+	statistics.timer.stop();
+	check_timer_and_print_statistics();
 	return result;
 }
 
@@ -404,7 +408,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::get_fact_set(Co
 template<>
 auto ConflictExtraction::ConflictExtractionHelper<FactSet>::get_score(const Conflict &, ScoringIndex) -> double {
 	std::cerr << "Requested a score from a conflict without attached scores." << std::endl;
-	utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+	utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 }
 
 template<>
@@ -628,7 +632,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::apply_tie_break
 	auto current_scoring_method = *scoring_begin;
 	if (current_scoring_method == ScoringMethod::RANDOM) {
 		statistics.update_tie_break_size(conflicts_size);
-		g_rng()->shuffle(conflicts_begin, conflicts_begin + count);
+		g_rng()->shuffle(conflicts_begin, conflicts_end);
 		return;
 	}
 	if (current_scoring_method == ScoringMethod::LAST) {
@@ -794,7 +798,7 @@ void ConflictExtraction::ConflictExtractionHelper<ConflictType>::find_zero_prior
 
 		const auto &precondition_conjunctions = heuristic.cross_context ?
 			bsg_node.precondition_conjunctions :
-			get_non_dominated_conjunctions(bsg_node.precondition_facts, heuristic.conjunctions_containing_fact);
+			get_non_dominated_conjunctions(bsg_node.precondition_facts, *heuristic.conjunction_subset_generator);
 
 		// find conflicts
 		for (const auto precondition_conjunction1 : precondition_conjunctions) {
@@ -1025,7 +1029,7 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 			const auto &bsg_node = bsg[i];
 			const auto &precondition_conjunctions = heuristic.cross_context ?
 				bsg_node.precondition_conjunctions :
-				get_non_dominated_conjunctions(bsg_node.precondition_facts, heuristic.conjunctions_containing_fact);
+				get_non_dominated_conjunctions(bsg_node.precondition_facts, *heuristic.conjunction_subset_generator);
 			// find conflicts
 			for (const auto precondition_conjunction1 : precondition_conjunctions) {
 				// not actually a predecessor (conjunction already achieved in the current state)
@@ -1125,14 +1129,18 @@ auto ConflictExtraction::ConflictExtractionHelper<ConflictType>::generate_candid
 
 
 void ConflictExtraction::print_statistics() const {
-	if (statistics_printer) {
-		auto ss = std::stringstream();
-		ss << "Average conflict tie break size: " << statistics.get_avg_tie_break_size() << std::endl;
-		ss << "Maximum conflict tie break size: " << statistics.max_tie_break_size << std::endl;
-		ss << "Average number of conflicts: " << statistics.get_avg_num_conflicts() << std::endl;
-		ss << "Maximum number of conflicts: " << statistics.max_num_conflicts << std::endl;
-		ss << "Number of switches to fewest counters estimate: " << statistics.num_fewest_counters_estimate_switches << std::endl;
-		statistics_printer->print(ss.str());
+	std::cout << "Average conflict tie break size: " << statistics.get_avg_tie_break_size() << std::endl;
+	std::cout << "Maximum conflict tie break size: " << statistics.max_tie_break_size << std::endl;
+	std::cout << "Average number of conflicts: " << statistics.get_avg_num_conflicts() << std::endl;
+	std::cout << "Maximum number of conflicts: " << statistics.max_num_conflicts << std::endl;
+	std::cout << "Number of switches to fewest counters estimate: " << statistics.num_fewest_counters_estimate_switches << std::endl;
+	std::cout << "Conflict extraction time: " << statistics.timer() << "s" << std::endl;
+}
+
+void ConflictExtraction::check_timer_and_print_statistics() {
+	if (statistics_interval != -1 && statistics_timer() > next_print_time) {
+		print_statistics();
+		next_print_time = statistics_timer() + statistics_interval;
 	}
 }
 

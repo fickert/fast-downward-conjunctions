@@ -13,6 +13,7 @@
 #include "../utils/rng.h"
 
 #include "conjunctions.h"
+#include "conjunctions_subset_generator.h"
 #include "conflict_extraction.h"
 #include "generation_strategy.h"
 #include <boost/dynamic_bitset/dynamic_bitset.hpp>
@@ -137,13 +138,15 @@ public:
 			|| std::any_of(std::begin(supported.facts), std::end(supported.facts), is_mutex_with_f);
 	}
 
-	void add_conjunctions(const std::vector<FactSet> &factsets);
+	void add_conjunctions(const std::vector<FactSet> &factsets, bool singleton_initialization = false);
 
 	void remove_random_conjunctions(int count = 1, int min_evaluations = 0);
 	void remove_oldest_conjunctions(int count = 1, int min_evaluations = 0);
 	void remove_least_frequently_in_relaxed_plans_conjunctions(int count = 1, int min_evaluations = 0);
 	void remove_least_efficient_conjunctions(int count = 1, int min_evaluations = 0);
 	void remove_conjunctions_with_most_counters(int count = 1, int min_evaluations = 0);
+	void remove_least_useful_conjunctions_simple(int count = 1, int min_evaluations = 0);
+	void remove_least_useful_conjunctions_advanced(int count = 1, int min_evaluations = 0);
 
 	auto get_last_relaxed_plan() const -> std::vector<const GlobalOperator *>;
 
@@ -184,10 +187,7 @@ private:
 	std::vector<FactPair> goal_facts;
 
 	struct ConjunctionStatistics {
-		ConjunctionStatistics() :
-			occurences(0),
-			total(0),
-			evaluations(0) {}
+		ConjunctionStatistics() : occurences(0), total(0), evaluations(0), useful_simple(0), useful_advanced(0) {}
 
 		// occurences in relaxed plans
 		int occurences;
@@ -197,6 +197,10 @@ private:
 
 		// total number of evaluations since this conjunction was added
 		int evaluations;
+
+		// usefulness, only tracked if the corresponding command-line option is set
+		int useful_simple;
+		int useful_advanced;
 	};
 
 	std::unordered_map<const Conjunction *, ConjunctionStatistics> conjunction_statistics;
@@ -217,6 +221,11 @@ private:
 		CONFLICTS
 	};
 
+	enum class TrackConjunctionUsefulness {
+		NONE,
+		SIMPLE,
+		ADVANCED
+	};
 
 	friend auto operator<<(std::ostream &, const BestSupporterFunction) -> std::ostream &;
 	friend auto operator<<(std::ostream &, const TieBreaking) -> std::ostream &;
@@ -231,10 +240,9 @@ private:
 	auto get_potentially_supporting_actions(const FactSet &facts) const->std::vector<const Action *>;
 	auto compute_regressions(const FactSet &facts) const->std::vector<std::pair<const Action *, std::vector<FactPair>>>;
 
-	// list of conjunctions c for each fact f where f in c
-	std::vector<std::vector<std::vector<Conjunction *>>> conjunctions_containing_fact;
-	void initialize_conjunctions_containing_fact();
+	std::vector<std::vector<Conjunction *>> singleton_conjunctions;
 
+	std::unique_ptr<ConjunctionSubsetGenerator<Conjunction>> conjunction_subset_generator;
 	
 	std::vector<CounterGroup> counter_groups;
 	std::vector<CounterGroupIndex> unused_counter_groups;
@@ -356,6 +364,7 @@ private:
 	const bool cross_context;
 	const BestSupporterFunction best_supporter_function;
 	const TieBreaking tie_breaking;
+	const TrackConjunctionUsefulness track_conjunction_usefulness;
 	utils::RandomNumberGenerator rng;
 	
 	// statistics
@@ -396,17 +405,52 @@ private:
 	// sum up the size of all counter groups
 	auto compute_total_counter_group_size() const -> int;
 
-	auto get_dominated_conjunctions_slow(const FactSet &facts) const -> std::vector<const Conjunction *> {
-		if (facts.size() < 2)
-			return {};
-		auto dominated_conjunctions = std::unordered_set<const Conjunction*>();
-		for (const auto &fact : facts)
-			for (const auto conjunction : conjunctions_containing_fact[fact.var][fact.value])
-				if (std::includes(std::begin(facts), std::end(facts), std::begin(conjunction->facts), std::end(conjunction->facts)))
-					dominated_conjunctions.insert(conjunction);
-		auto dominated_conjunctions_vector = std::vector<const Conjunction *>();
-		dominated_conjunctions_vector.assign(std::begin(dominated_conjunctions), std::end(dominated_conjunctions));
-		return dominated_conjunctions_vector;
+	auto is_conjunction_useful_simple(const Conjunction &conjunction) const -> bool {
+		assert(conjunction.facts.size() > 1);
+		auto dominated_conjunctions = get_all_conjunctions(conjunction.facts, *conjunction_subset_generator);
+		for (auto it = std::begin(dominated_conjunctions); it != std::end(dominated_conjunctions); ++it) {
+			if (*it == &conjunction) {
+				dominated_conjunctions.erase(it);
+				break;
+			}
+		}
+		return std::any_of(std::begin(dominated_conjunctions), std::end(dominated_conjunctions), [&conjunction, this](const auto other) {
+			// NOTE: a conjunction c can have a smaller h^Cadd value than its dominated subconjunctions, because there may be a big conjunction that is a precondition for c, but cannot be used as precondition for its dominated conjunctions where many smaller conjunctions are used as preconditions instead. Then the sum over the costs of the smaller conjunctions can be greater than the cost of the single bigger precondition conjunction.
+			assert(best_supporter_function == BestSupporterFunction::HCADD || best_supporter_function == BestSupporterFunction::HCADD_ALTERNATIVE ?
+				other->cost != -1 || conjunction.cost == -1 :
+				conjunction.cost >= other->cost || conjunction.cost == -1);
+			return conjunction.cost > other->cost || (conjunction.cost == -1 && other->cost != -1);
+		});
+	}
+
+	auto is_conjunction_useful_advanced(const Conjunction &conjunction, bool successfully_evaluated_useful_simple = false) const -> bool {
+		assert(conjunction.facts.size() > 1);
+		if (!successfully_evaluated_useful_simple && !is_conjunction_useful_simple(conjunction))
+			return false;
+		if (conjunction.cost == -1) {
+			if (conjunction.is_subgoal && std::all_of(std::begin(non_dominated_goal_conjunctions), std::end(non_dominated_goal_conjunctions), [&conjunction](const auto other) {
+				return other == &conjunction || other->cost != -1;
+			}))
+				// this conjunction is solely responsible for the goal being unreachable
+				return true;
+			// there is a counter group where this is a precondition, none of the other preconditions are unreachable, and at least one attached conjunction that is also unreachable
+			return std::any_of(std::begin(conjunction.regression_of), std::end(conjunction.regression_of), [&conjunction, this](const auto counter_group_index) {
+				auto &counter_group = counter_groups[counter_group_index];
+				return std::all_of(std::begin(counter_group.regression_conjunctions), std::end(counter_group.regression_conjunctions), [&conjunction](const auto other) {
+					return other == &conjunction || other->cost != -1;
+				}) && std::any_of(std::begin(counter_group.group), std::end(counter_group.group), [](const auto &group_pair) {
+					return group_pair.second->cost == -1;
+				});
+			});
+		}
+		assert(conjunction.cost != -1);
+		// the conjunction contributes to the cost of either the overall goal or some precondition for another conjunction
+		return (conjunction.is_subgoal || std::any_of(std::begin(conjunction.regression_of), std::end(conjunction.regression_of), [&conjunction, this](const auto counter_group_index) {
+			auto &counter_group = counter_groups[counter_group_index];
+			return std::any_of(std::begin(counter_group.group), std::end(counter_group.group), [&counter_group](const auto &group_pair) {
+				return group_pair.second->cost == counter_group.cost + group_pair.first->cost;
+			});
+		}));
 	}
 
 	// BSG representing the most recently extracted relaxed plan
@@ -428,16 +472,19 @@ private:
 
 	void reset_heuristic();
 	
-	auto compute_best_supporter_function(const State &) -> int;
+	auto compute_best_supporter_function(const State &) -> cost_t;
 
-	auto compute_hcadd(const State &) -> int;
-	auto compute_hcadd_alternative(const State &) -> int;
+	auto compute_hcadd(const State &) -> cost_t;
+	auto compute_hcadd_alternative(const State &) -> cost_t;
 
 	auto compute_hcmax(const State &) -> int;
 	auto compute_hcmax_greedy(const State &) -> int;
 
 	void extract_relaxed_plan();
-	auto select_conjunction_and_action(std::map<int, std::vector<Conjunction *>> &) -> std::pair<Conjunction *, const Action *>;
+	auto select_conjunction_and_action(std::map<cost_t, std::vector<Conjunction *>> &) -> std::pair<Conjunction *, const Action *>;
+
+	// convert cost to int
+	static constexpr auto convert_cost(cost_t cost) -> int { return std::min(static_cast<cost_t>(std::numeric_limits<int>::max()), cost); }
 
 	void verify_relaxed_plan(const BestSupporterGraph &) const;
 

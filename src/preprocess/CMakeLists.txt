@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 2.8.3)
 if(NOT FAST_DOWNWARD_MAIN_CMAKELISTS_READ)
     message(
         FATAL_ERROR
-        "Run cmake on the CMakeLists.txt in the 'src' directory, "
-        "not the one in 'src/preprocess'. Please delete CMakeCache.txt "
+        "Run cmake on the CMakeLists.txt in the root directory, "
+        "not the one in 'src'. Please delete CMakeCache.txt "
         "from the current directory and restart cmake.")
 endif()
 
@@ -17,6 +17,7 @@ set(PREPROCESS_SOURCES
     axiom
     causal_graph
     domain_transition_graph
+    h2_mutexes
     helper_functions
     max_dag
     mutex_group

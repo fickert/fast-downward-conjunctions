@@ -6,7 +6,8 @@
 #include <fstream>
 #include <iostream>
 
-MutexGroup::MutexGroup(istream &in, const vector<Variable *> &variables) {
+MutexGroup::MutexGroup(istream &in, const vector<Variable *> &variables) : dir(FW) {
+    //Mutex groups detected in the translator are "fw" mutexes
     int size;
     check_magic(in, "begin_mutex_group");
     in >> size;
@@ -16,6 +17,26 @@ MutexGroup::MutexGroup(istream &in, const vector<Variable *> &variables) {
         facts.push_back(make_pair(variables[var_no], value));
     }
     check_magic(in, "end_mutex_group");
+}
+MutexGroup::MutexGroup(const vector<pair<int, int>> &f,
+                       const vector<Variable *> &variables,
+                       bool regression) {
+    if (regression) {
+        dir = BW;
+    } else {
+        dir = FW;
+    }
+    for (size_t i = 0; i < f.size(); ++i) {
+        int var_no = f[i].first;
+        int value = f[i].second;
+        facts.push_back(make_pair(variables[var_no], value));
+    }
+}
+
+MutexGroup::MutexGroup(const Variable *var) : dir(FW) {
+    for (int i = 0; i < var->get_range(); ++i) {
+        facts.push_back(make_pair(var, i));
+    }
 }
 
 int MutexGroup::get_encoding_size() const {
@@ -45,7 +66,7 @@ void MutexGroup::generate_cpp_input(ofstream &outfile) const {
 void MutexGroup::strip_unimportant_facts() {
     int new_index = 0;
     for (const auto &fact : facts) {
-        if (fact.first->get_level() != -1)
+        if (fact.first->get_level() != -1 && fact.first->is_necessary())
             facts[new_index++] = fact;
     }
     facts.erase(facts.begin() + new_index, facts.end());
@@ -72,4 +93,34 @@ void strip_mutexes(vector<MutexGroup> &mutexes) {
     mutexes.erase(mutexes.begin() + new_index, mutexes.end());
     cout << mutexes.size() << " of " << old_count
          << " mutex groups necessary." << endl;
+}
+
+void MutexGroup::remove_unreachable_facts() {
+    vector<pair<const Variable *, int>> newfacts;
+    for (const pair<const Variable *, int> &fact : facts) {
+        if (fact.first->is_necessary() && fact.first->is_reachable(fact.second)) {
+            newfacts.push_back(make_pair(fact.first, fact.first->get_new_id(fact.second)));
+        }
+    }
+    newfacts.swap(facts);
+}
+
+
+
+void MutexGroup::get_mutex_group(vector<pair<int, int>> &invariant_group) const {
+    invariant_group.reserve(facts.size());
+    for (size_t j = 0; j < facts.size(); ++j) {
+        int var = facts[j].first->get_level();
+        int val = facts[j].second;
+        invariant_group.push_back(make_pair(var, val));
+    }
+}
+
+bool MutexGroup::hasPair(int var, int val) const {
+    for (const pair<const Variable *, int> &fact : facts) {
+        if (fact.first->get_level() == var && fact.second == val) {
+            return true;
+        }
+    }
+    return false;
 }

@@ -231,7 +231,15 @@ SearchStatus LazySearchYahspLookahead::step() {
 				return SOLVED;
 			}
 
+			// for the lookahead, we need to make sure that the heuristic was last evaluated on the current state
+			// ==> reset cache and recompute heuristic if necessary
+			// auto &cached_result = const_cast<HeuristicCache &>(current_eval_context.get_cache())[heuristic];
+			// if (!cached_result.is_uninitialized())
+			// 	cached_result = EvaluationResult();
+			// current_eval_context.get_result(heuristic);
+
 			lookahead_statistics.lookahead_timer.resume();
+			++lookahead_statistics.num_lookahead;
 			const auto [lookahead_state, lookahead_plan] = yahsp_lookahead->lookahead(current_eval_context, *heuristic, state_registry, *g_successor_generator);
 			lookahead_statistics.lookahead_timer.stop();
 			assert(!lookahead_plan.empty());
@@ -279,12 +287,14 @@ SearchStatus LazySearchYahspLookahead::step() {
 						next_evaluation_context.emplace(std::move(lookahead_eval_context));
 					}
 				}
+				// TODO: maybe do something different with the result of the lookahead? like evaluating more than just one state in the end? maybe different evaluation scheme in the lookahead (careful with the configuration space though... it's already really large)
 			} else if (global_lookahead_node.is_dead_end()) {
 				++lookahead_statistics.num_lookahead_is_dead_end;
 			} else {
 				assert(global_lookahead_node.is_closed());
 				++lookahead_statistics.num_lookahead_is_closed;
 			}
+			// TODO: might not always want to do the lookahead ... maybe only if this state has lower or equal key as the open list top element? though the heuristic will be refined, so older values may no longer be accurate...
 
 			generate_successors();
 			statistics.inc_expanded();

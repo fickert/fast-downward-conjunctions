@@ -80,7 +80,12 @@ protected:
 	novelty::NoveltyHeuristic *novelty_heuristic;
 	ConjunctionsSubgoalHeuristic subgoal_heuristic;
 
+	enum class LookaheadClosedLearning { YES, NO, MAYBE } const do_learning_if_lookahead_closed;
+
 	bool solved;
+
+	enum class ConjunctionGenerationStatus { SOLVED, DEAD_END, DEFAULT };
+	auto generate_conjunction(SearchNode &node, SearchNode &global_lookahead_node) -> ConjunctionGenerationStatus;
 
 	void initialize() override;
 	SearchStatus step() override;
@@ -98,11 +103,12 @@ protected:
 	open_list_t lookahead_open_list;
 	static auto create_open_list(int w) -> open_list_t;
 
+	std::unique_ptr<StateRegistry> lookahead_state_registry;
 	std::unique_ptr<SearchSpace> lookahead_search_space;
 
 	const bool no_learning;
 
-	void lookahead_expand(SearchNode &node, SearchSpace &current_search_space);
+	void lookahead_expand(SearchNode &node);
 	auto lookahead() -> std::pair<SearchStatus, StateID>;
 
 	void generate_successors();

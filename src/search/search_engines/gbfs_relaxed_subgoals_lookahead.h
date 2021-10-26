@@ -96,9 +96,10 @@ protected:
 	open_list_t lookahead_open_list;
 	static auto create_open_list(int w) -> open_list_t;
 
+	std::unique_ptr<StateRegistry> lookahead_state_registry;
 	std::unique_ptr<SearchSpace> lookahead_search_space;
 
-	void lookahead_expand(SearchNode &node, SearchSpace &current_search_space);
+	void lookahead_expand(SearchNode &node);
 	auto lookahead() -> std::pair<SearchStatus, StateID>;
 
 	void generate_successors();

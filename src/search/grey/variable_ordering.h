@@ -6,6 +6,7 @@ namespace traps {
     class variable_iterator {
         public:
             variable_iterator() {}
+            virtual ~variable_iterator() = default;
             virtual void initialize(){}
             virtual unsigned next() = 0;
             virtual void reset() = 0;

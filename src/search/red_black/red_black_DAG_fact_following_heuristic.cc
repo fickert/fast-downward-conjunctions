@@ -46,7 +46,7 @@ RedBlackDAGFactFollowingHeuristic::RedBlackDAGFactFollowingHeuristic(
         cout
                 << "Cannot set applicable_paths_first when not extracting the plan -- need to maintain the current state"
                 << endl;
-        utils::exit_with(utils::ExitCode::INPUT_ERROR);
+        utils::exit_with(utils::ExitCode::SEARCH_INPUT_ERROR);
     }
 }
 
@@ -466,7 +466,7 @@ void RedBlackDAGFactFollowingHeuristic::set_red_black_indices() {
     if (!ts.get_result(res)) {
         // Not DAG!!
         cout << "The black part is not DAG! Bug!" << endl;
-        utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+        utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
     }
     // Replacing black indices with the new order
     vector<int> tmp_indices;
@@ -997,7 +997,7 @@ int RedBlackDAGFactFollowingHeuristic::get_semi_relaxed_plan_cost(
         }
         // Should not get here!!!
         cout << "Still not applicable!!! Bug!" << endl;
-        utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+        utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
     }
 }
 
@@ -1218,7 +1218,7 @@ int RedBlackDAGFactFollowingHeuristic::get_next_action(
             return -1;
         }
         cout << "Should be at least one element!! Bug!" << endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
     }
 
 #ifdef DEBUG_RED_BLACK
@@ -1335,7 +1335,7 @@ int RedBlackDAGFactFollowingHeuristic::resolve_conflicts_disconnected(
                 cout
                         << "Returned DEAD_END for invertible variable! Should not happen! Bug!"
                         << endl;
-				utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+				utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
             }
             return DEAD_END;
         }
@@ -1614,7 +1614,7 @@ int RedBlackDAGFactFollowingHeuristic::resolve_conflicts_DAG(
 #endif
         // Not applicable, bug.
         cout << "Should be applicable!!! Bug!" << endl;
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
     }
 
     return black_part;

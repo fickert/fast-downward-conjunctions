@@ -132,6 +132,8 @@ private:
 
 	bool k_cutoff;
 
+	bool sse_backjumping;
+
 	// settings
 	const bool no_learning;
 	const bool restart_in_dead_ends;

@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "../abstract_task.h"
+#include "../utils/timer.h"
 #include "conjunctions.h"
 #include "utils.h"
 
@@ -23,6 +24,8 @@ public:
 	ConflictExtraction(const options::Options &opts);
 
 	auto generate_candidate_conjunctions(const AbstractTask &task, BestSupporterGraph &bsg, const ConjunctionsHeuristic &heuristic, int count) -> std::vector<FactSet>;
+
+	void print_statistics() const;
 
 private:
 	enum class ConjunctionGenerationAlgorithm {
@@ -97,13 +100,16 @@ private:
 	}
 
 	struct ConflictExtractionStatistics {
-		ConflictExtractionStatistics() :
-			num_conflict_selections(0),
-			max_tie_break_size(0),
-			total_tie_break_size(0),
-			max_num_conflicts(0),
-			total_num_conflicts(0),
-			num_fewest_counters_estimate_switches(0) {}
+		ConflictExtractionStatistics()
+			: num_conflict_selections(0),
+			  max_tie_break_size(0),
+			  total_tie_break_size(0),
+			  max_num_conflicts(0),
+			  total_num_conflicts(0),
+			  num_fewest_counters_estimate_switches(0) {
+			timer.stop();
+			timer.reset();
+		}
 
 		auto get_avg_tie_break_size() const -> double {
 			return num_conflict_selections == 0 ? 0. : total_tie_break_size / static_cast<double>(num_conflict_selections);
@@ -133,11 +139,14 @@ private:
 		int max_num_conflicts;
 		long int total_num_conflicts;
 		int num_fewest_counters_estimate_switches;
+		utils::Timer timer;
 	} statistics;
 
-	std::unique_ptr<TimedPrinter> statistics_printer;
+	const int statistics_interval;
+	utils::Timer statistics_timer;
+	double next_print_time;
 
-	void print_statistics() const;
+	void check_timer_and_print_statistics();
 
 	template<typename ConflictType = FactSet>
 	struct ConflictExtractionHelper {

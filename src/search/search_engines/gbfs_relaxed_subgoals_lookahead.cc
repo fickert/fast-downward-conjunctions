@@ -120,11 +120,11 @@ void LazySearchRelaxedSubgoalsLookahead::get_successor_operators(std::vector<con
 	}
 }
 
-void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node, SearchSpace &current_search_space) {
+void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node) {
 	node.close();
 	++lookahead_statistics.num_lookahead_expansions;
 	const auto state = node.get_state();
-	assert(!search_space.get_node(state).is_dead_end());
+	assert(!state_registry.lookup_state(state) || !search_space.get_node(*state_registry.lookup_state(state)).is_dead_end());
 	auto applicable_ops = std::vector<const GlobalOperator *>();
 	g_successor_generator->generate_applicable_ops(state, applicable_ops);
 
@@ -132,12 +132,13 @@ void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node, Sear
 		const auto succ_g = node.get_g() + get_adjusted_cost(*op);
 		if (current_real_g + node.get_real_g() + op->get_cost() > bound)
 			continue;
-		const auto succ = state_registry.get_successor_state(state, *op);
+		const auto succ = lookahead_state_registry->get_successor_state(state, *op);
 		statistics.inc_generated();
 		++lookahead_statistics.num_lookahead_generated;
-		auto succ_node = current_search_space.get_node(succ);
-		if (search_space.get_node(succ).is_dead_end())
+		auto global_succ = state_registry.lookup_state(succ);
+		if (global_succ && search_space.get_node(*global_succ).is_dead_end())
 			continue;
+		auto succ_node = lookahead_search_space->get_node(succ);
 		if (!succ_node.is_new()) {
 			if (succ_node.get_g() > succ_g)
 				succ_node.update_parent(node, op);
@@ -148,27 +149,34 @@ void LazySearchRelaxedSubgoalsLookahead::lookahead_expand(SearchNode &node, Sear
 			lookahead_open_list.emplace(open_list_entry{succ.get_id(), succ_g, subgoal_heuristic.compute_result(state.get_id(), succ)});
 		else {
 			auto eval_context = EvaluationContext(succ, succ_g, true, nullptr);
-			if (!eval_context.is_heuristic_infinite(heuristic))
-				lookahead_open_list.emplace(open_list_entry{ succ.get_id(), succ_g, eval_context.get_heuristic_value(heuristic) });
+			if (!eval_context.is_heuristic_infinite(heuristic)) {
+				lookahead_open_list.emplace(open_list_entry{succ.get_id(), succ_g, eval_context.get_heuristic_value(heuristic)});
+			} else {
+				if (!global_succ)
+					global_succ.emplace(state_registry.import_state(succ));
+				search_space.get_node(*global_succ).mark_as_dead_end();
+			}
 		}
 	}
 }
 
 auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, StateID> {
 	++lookahead_statistics.num_lookahead;
-	if (!use_base_heuristic)
-		subgoal_heuristic.initialize(heuristic->get_last_subgoals_and_costs(), current_eval_context.get_state().get_id());
-	lookahead_search_space = std::make_unique<SearchSpace>(state_registry, cost_type);
+	lookahead_state_registry = std::make_unique<StateRegistry>(*g_root_task(), *g_state_packer, *g_axiom_evaluator, g_initial_state_data);
+	lookahead_search_space = std::make_unique<SearchSpace>(*lookahead_state_registry, cost_type);
 	lookahead_open_list = create_open_list(lookahead_weight);
-	auto initial_node = lookahead_search_space->get_node(current_state);
+	const auto lookahead_initial_state = lookahead_state_registry->import_state(current_state);
+	if (!use_base_heuristic)
+		subgoal_heuristic.initialize(heuristic->get_last_subgoals_and_costs(), lookahead_initial_state.get_id());
+	auto initial_node = lookahead_search_space->get_node(lookahead_initial_state);
 	initial_node.open_initial();
-	lookahead_expand(initial_node, *lookahead_search_space);
+	lookahead_expand(initial_node);
 
 	novelty_heuristic->reset();
 	// evaluate novelty to mark currently true facts non-novel for other states
 	if (current_eval_context.get_heuristic_value(novelty_heuristic) == 1) {
 		assert(false && "should be unreachable");
-		utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+		utils::exit_with(utils::ExitCode::SEARCH_CRITICAL_ERROR);
 	}
 
 	auto best_state_id = StateID::no_state;
@@ -177,7 +185,7 @@ auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, 
 	while (!lookahead_open_list.empty()) {
 		auto [state_id, g, h] = lookahead_open_list.top();
 		lookahead_open_list.pop();
-		const auto state = state_registry.lookup_state(state_id);
+		const auto state = lookahead_state_registry->lookup_state(state_id);
 		auto eval_context = EvaluationContext(state, &statistics);
 		auto node = lookahead_search_space->get_node(state);
 		assert(node.is_open());
@@ -199,7 +207,7 @@ auto LazySearchRelaxedSubgoalsLookahead::lookahead() -> std::pair<SearchStatus, 
 			best_state_h = h;
 			best_state_id = state.get_id();
 		}
-		lookahead_expand(node, *lookahead_search_space);
+		lookahead_expand(node);
 	}
 
 	return {IN_PROGRESS, best_state_id};
@@ -347,14 +355,15 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 				statistics.inc_dead_ends();
 				return fetch_next_state();
 			}
-			const auto lookahead_state = state_registry.lookup_state(lookahead_state_id);
+			const auto original_lookahead_state = lookahead_state_registry->lookup_state(lookahead_state_id);
+			const auto lookahead_state = state_registry.import_state(original_lookahead_state);
 
 			if (lookahead_status == SOLVED) {
 				++lookahead_statistics.num_lookahead_is_selected;
 				lookahead_statistics.notify_lookahead_is_new_or_open(current_eval_context.get_heuristic_value(heuristic));
 				assert(test_goal(lookahead_state));
 				auto lookahead_plan = Plan();
-				lookahead_search_space->trace_path(lookahead_state, lookahead_plan);
+				lookahead_search_space->trace_path(original_lookahead_state, lookahead_plan);
 				auto overall_plan = Plan();
 				search_space.trace_path(current_state, overall_plan);
 				overall_plan.insert(std::end(overall_plan), std::begin(lookahead_plan), std::end(lookahead_plan));
@@ -362,7 +371,7 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 				return SOLVED;
 			}
 
-			auto lookahead_node = lookahead_search_space->get_node(lookahead_state);
+			auto lookahead_node = lookahead_search_space->get_node(original_lookahead_state);
 			auto lookahead_eval_context = EvaluationContext(lookahead_state, current_g + lookahead_node.get_g(), true, &statistics);
 
 			auto global_lookahead_node = search_space.get_node(lookahead_state);
@@ -376,7 +385,7 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 					lookahead_statistics.notify_lookahead_is_new_or_open(current_eval_context.get_heuristic_value(heuristic) - lookahead_eval_context.get_heuristic_value(heuristic));
 					if (lookahead_eval_context.get_heuristic_value(heuristic) < current_eval_context.get_heuristic_value(heuristic)) {
 						auto lookahead_plan = Plan();
-						lookahead_search_space->trace_path(lookahead_state, lookahead_plan);
+						lookahead_search_space->trace_path(original_lookahead_state, lookahead_plan);
 
 						auto new_g = current_g;
 						auto new_real_g = current_real_g;
@@ -398,14 +407,12 @@ SearchStatus LazySearchRelaxedSubgoalsLookahead::step() {
 						next_evaluation_context.emplace(std::move(lookahead_eval_context));
 					}
 				}
-				// TODO: maybe do something different with the result of the lookahead? like evaluating more than just one state in the end? maybe different evaluation scheme in the lookahead (careful with the configuration space though... it's already really large)
 			} else if (global_lookahead_node.is_dead_end()) {
 				++lookahead_statistics.num_lookahead_is_dead_end;
 			} else {
 				assert(global_lookahead_node.is_closed());
 				++lookahead_statistics.num_lookahead_is_closed;
 			}
-			// TODO: might not always want to do the lookahead ... maybe only if this state has lower or equal key as the open list top element? though the heuristic will be refined, so older values may no longer be accurate...
 
 			generate_successors();
 			statistics.inc_expanded();
