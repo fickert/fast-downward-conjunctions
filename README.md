@@ -1,21 +1,26 @@
-This is a fork of [Fast Downward](http://www.fast-downward.org/) extended with an implementation of the h^CFF heuristic and online refinement of explicit conjunctions. This implementation has been used for experiments in the following literature:
+This is a fork of [Fast Downward](http://www.fast-downward.org/) extended with an implementation of the hCFF heuristic and online refinement of explicit conjunctions.
+This implementation has been used for experiments in the following literature:
 
 * J. Hoffmann and M. Fickert: [Explicit Conjunctions w/o Compilation: Computing hFF(PiC) in Polynomial Time](http://fai.cs.uni-saarland.de/hoffmann/papers/icaps15b.pdf) (ICAPS'15)
-* M. Fickert, J. Hoffmann, and M. Steinmetz: [Combining the Delete Relaxation with Critical-Path Heuristics: A Direct Characterization](http://fai.cs.uni-saarland.de/hoffmann/papers/jair16.pdf) (JAIR'16)
+* M. Fickert, J. Hoffmann, and M. Steinmetz: [Combining the Delete Relaxation with Critical-Path Heuristics: A Direct Characterization](https://jair.org/index.php/jair/article/view/11027) (JAIR'16)
 * M. Fickert and J. Hoffmann: [Complete Local Search: Boosting Hill-Climbing through Online Relaxation Refinement](http://fai.cs.uni-saarland.de/hoffmann/papers/icaps17a.pdf) (ICAPS'17)
 * M. Fickert and J. Hoffmann: [Ranking Conjunctions for Partial Delete Relaxation Heuristics in Planning](http://fai.cs.uni-saarland.de/hoffmann/papers/socs17b.pdf) (SOCS'17)
 * M. Fickert: [Making Hill-Climbing Great Again through Online Relaxation Refinement and Novelty Pruning](http://fai.cs.uni-saarland.de/fickert/papers/socs18.pdf) (SOCS'18)
 * M. Fickert: [A Novel Lookahead Strategy for Delete Relaxation Heuristics in Greedy Best-First Search](http://fai.cs.uni-saarland.de/fickert/papers/icaps20.pdf) (ICAPS'20)
+* M. Fickert and J. Hoffmann: Online Relaxation Refinement for Satisficing Planning: On Partial Delete Relaxation, Complete Hill-Climbing, and Novelty Pruning (JAIR'21)
 
-It is also the code base of the OLCFF planner that competes in the [International Planning Competition 2018](https://ipc2018-classical.bitbucket.io/).
+It is also the code base of OLCFF and parts of Saarplan; both planners competed in the [International Planning Competition 2018](https://ipc2018-classical.bitbucket.io/).
 
-The heuristic and online-refinement search engines are implemented in `src/search/conjunctions`. Here's an example configuration to give you an idea how to run the heuristic with online refinement:
+The hCFF heuristic and online-refinement search engines are implemented in `src/search/conjunctions`.
+The best-performing configurations of RHC, RHC-SC, and GBFS-SCL from the JAIR'21 paper have corresponding aliases (see `driver/aliases.py`), so they can be run as follows:
 
 ```
-./fast-downward.py domain.pddl task.pddl \
-	--heuristic "hcff=cff(cost_type=ONE, cache_estimates=false)" \
-	--search "ehc_c(hcff, preferred=hcff, cost_type=ONE)"
+./fast-downward.py --alias RHC task.pddl
+./fast-downward.py --alias RHC-SC task.pddl
+./fast-downward.py --alias GBFS-SCL task.pddl
 ```
+
+The code also contains a copy of the h2 preprocessor (Alcazar and Torralba, ICAPS'15), which can be enabled by prepending the `--transform-task=preprocess` driver option.
 
 ## Fast Downward
 
