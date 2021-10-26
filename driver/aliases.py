@@ -8,6 +8,27 @@ PORTFOLIO_DIR = os.path.join(DRIVER_DIR, "portfolios")
 ALIASES = {}
 
 
+ALIASES['RHC'] = [
+    '--heuristic', 'hcff=cff(seed=-1, cache_estimates=false, cost_type=1)',
+    '--heuristic', 'hn=novelty(cache_estimates=false)',
+    '--heuristic', 'tmp=novelty_linker(hcff, [hn])',
+    '--search', 'ehc_cn(hcff, preferred=hcff, novelty=hn, cost_type=1, seed=-1, w=infinity, search_space_exhaustion=RESTART, restart_in_dead_ends=true, learning_stagnation_threshold=1)'
+]
+
+ALIASES['RHC-SC'] = [
+    '--heuristic', 'hcff=cff(seed=-1, cache_estimates=false, cost_type=1)',
+    '--heuristic', 'hn=novelty(cache_estimates=false)',
+    '--heuristic', 'tmp=novelty_linker(hcff, [hn])',
+    '--search', 'ehc_cnsg(hcff, novelty=hn, cost_type=1, always_reevaluate=true, subgoal_aggregation_method=COUNT, path_dependent_subgoals=true, w=1, seed=-1, restart_in_dead_ends=true, learning_stagnation_threshold=1)'
+]
+
+ALIASES['GBFS-SCL'] = [
+    '--heuristic', 'hcff=cff(seed=-1, cache_estimates=false, cost_type=1)',
+    '--heuristic', 'hn=novelty(cache_estimates=false)',
+    '--heuristic', 'tmp=novelty_linker(hcff, [hn])',
+    '--search', 'lazy_greedy_rsl(hcff, preferred=[hcff], conjunctions_heuristic=hcff, novelty=hn, cost_type=1, subgoal_aggregation_method=COUNT, path_dependent_subgoals=true, lookahead_weight=1)'
+]
+
 ALIASES["seq-sat-fd-autotune-1"] = [
     "--heuristic", "hff=ff(transform=adapt_costs(one))",
     "--heuristic", "hcea=cea()",
