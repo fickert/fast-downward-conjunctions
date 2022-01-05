@@ -7,18 +7,20 @@ This implementation has been used for experiments in the following literature:
 * M. Fickert and J. Hoffmann: [Ranking Conjunctions for Partial Delete Relaxation Heuristics in Planning](http://fai.cs.uni-saarland.de/hoffmann/papers/socs17b.pdf) (SOCS'17)
 * M. Fickert: [Making Hill-Climbing Great Again through Online Relaxation Refinement and Novelty Pruning](http://fai.cs.uni-saarland.de/fickert/papers/socs18.pdf) (SOCS'18)
 * M. Fickert: [A Novel Lookahead Strategy for Delete Relaxation Heuristics in Greedy Best-First Search](http://fai.cs.uni-saarland.de/fickert/papers/icaps20.pdf) (ICAPS'20)
-* M. Fickert and J. Hoffmann: Online Relaxation Refinement for Satisficing Planning: On Partial Delete Relaxation, Complete Hill-Climbing, and Novelty Pruning (JAIR'21)
+* M. Fickert and J. Hoffmann: [Online Relaxation Refinement for Satisficing Planning: On Partial Delete Relaxation, Complete Hill-Climbing, and Novelty Pruning](https://jair.org/index.php/jair/article/view/13153) (JAIR'22)
 
 It is also the code base of OLCFF and parts of Saarplan; both planners competed in the [International Planning Competition 2018](https://ipc2018-classical.bitbucket.io/).
 
 The hCFF heuristic and online-refinement search engines are implemented in `src/search/conjunctions`.
-The best-performing configurations of RHC, RHC-SC, and GBFS-SCL from the JAIR'21 paper have corresponding aliases (see `driver/aliases.py`), so they can be run as follows:
+The best-performing configurations of RHC, RHC-SC, and GBFS-SCL from the JAIR'22 paper have corresponding aliases (see `driver/aliases.py`), so they can be run as follows:
 
 ```
 ./fast-downward.py --alias RHC task.pddl
 ./fast-downward.py --alias RHC-SC task.pddl
 ./fast-downward.py --alias GBFS-SCL task.pddl
 ```
+
+The `jair22-data.tar.xz` file contains the raw data from the JAIR'22 experiments (in the Downward Lab JSON format).
 
 The code also contains a copy of the h2 preprocessor (Alcazar and Torralba, ICAPS'15), which can be enabled by prepending the `--transform-task=preprocess` driver option.
 
