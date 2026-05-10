@@ -2,7 +2,7 @@ This is a fork of [Fast Downward](http://www.fast-downward.org/) extended with a
 This implementation has been used for experiments in the following literature:
 
 * J. Hoffmann and M. Fickert: [Explicit Conjunctions w/o Compilation: Computing hFF(PiC) in Polynomial Time](http://fai.cs.uni-saarland.de/hoffmann/papers/icaps15b.pdf) (ICAPS'15)
-* M. Fickert, J. Hoffmann, and M. Steinmetz: [Combining the Delete Relaxation with Critical-Path Heuristics: A Direct Characterization](https://jair.org/index.php/jair/article/view/11027) (JAIR'16)
+* M. Fickert, J. Hoffmann, and M. Steinmetz: [Combining the Delete Relaxation with Critical-Path Heuristics: A Direct Characterization](https://jair.org/index.php/jair/article/view/11012) (JAIR'16)
 * M. Fickert and J. Hoffmann: [Complete Local Search: Boosting Hill-Climbing through Online Relaxation Refinement](http://fai.cs.uni-saarland.de/hoffmann/papers/icaps17a.pdf) (ICAPS'17)
 * M. Fickert and J. Hoffmann: [Ranking Conjunctions for Partial Delete Relaxation Heuristics in Planning](http://fai.cs.uni-saarland.de/hoffmann/papers/socs17b.pdf) (SOCS'17)
 * M. Fickert: [Making Hill-Climbing Great Again through Online Relaxation Refinement and Novelty Pruning](http://fai.cs.uni-saarland.de/fickert/papers/socs18.pdf) (SOCS'18)
